@@ -158,53 +158,53 @@ END GO
 delimiter ;
 
 /*
-INSERT INTO lkup_entity
+INSERT INTO LKUP_ENTITY
 	(ENTITY_ID, ENTITY_TX, MOD_BY)
 	VALUES (1, 'Test', 'Test');
 
-INSERT INTO lkup_field
+INSERT INTO LKUP_FIELD
 	(FIELD_ID, ENTITY_ID, FIELD_TX, MOD_BY)
 	VALUES (1, 1, 'Field1', 'Test');
 
-INSERT INTO lkup_field
+INSERT INTO LKUP_FIELD
 	(FIELD_ID, ENTITY_ID, FIELD_TX, MOD_BY)
 	VALUES (2, 1, 'Field2', 'Test');
 
-INSERT INTO lkup_field
+INSERT INTO LKUP_FIELD
 	(FIELD_ID, ENTITY_ID, FIELD_TX, MOD_BY)
 	VALUES (3, 1, 'Field3', 'Test');
 
-INSERT INTO lkup_constraint
+INSERT INTO LKUP_CONSTRAINT
 	(CONSTRAINT_ID, DESCRIPTION_TX, MOD_BY)
 	VALUES (1, 'Test', 'Test');
 	
-INSERT INTO lkup_constraint_app
+INSERT INTO LKUP_CONSTRAINT_APP
 	(APPLICATION_ID, CONSTRAINT_ID, MOD_BY)
 	VALUES (1, 1, 'Test');
 	
-select 0 as expected, field_count as actual from lkup_constraint_app where application_id = 1 and constraint_id = 1;
+select 0 as expected, field_count as actual from LKUP_CONSTRAINT_APP where application_id = 1 and constraint_id = 1;
 
-INSERT INTO lkup_constraint_app_field
+INSERT INTO LKUP_CONSTRAINT_APP_FIELD
 	(APPLICATION_ID, FIELD_ID, CONSTRAINT_ID, MOD_BY)
 	VALUES (1, 1, 1, 'Test');
 
-select 1 as expected, field_count as actual from lkup_constraint_app where application_id = 1 and constraint_id = 1;
+select 1 as expected, field_count as actual from LKUP_CONSTRAINT_APP where application_id = 1 and constraint_id = 1;
 
-INSERT INTO lkup_constraint_app_field
+INSERT INTO LKUP_CONSTRAINT_APP_FIELD
 	(APPLICATION_ID, FIELD_ID, CONSTRAINT_ID, MOD_BY)
 	VALUES (1, 2, 1, 'Test');
 
-select 2 as expected, field_count as actual from lkup_constraint_app where application_id = 1 and constraint_id = 1;
+select 2 as expected, field_count as actual from LKUP_CONSTRAINT_APP where application_id = 1 and constraint_id = 1;
 
-INSERT INTO lkup_constraint_app_field
+INSERT INTO LKUP_CONSTRAINT_APP_FIELD
 	(APPLICATION_ID, FIELD_ID, CONSTRAINT_ID, MOD_BY)
 	VALUES (1, 3, 1, 'Test');
 
-select 3 as expected, field_count as actual from lkup_constraint_app where application_id = 1 and constraint_id = 1;
+select 3 as expected, field_count as actual from LKUP_CONSTRAINT_APP where application_id = 1 and constraint_id = 1;
 
-delete from lkup_constraint_app_field where CONSTRAINT_ID = 1 and FIELD_ID IN (2,3);
+delete from LKUP_CONSTRAINT_APP_FIELD where CONSTRAINT_ID = 1 and FIELD_ID IN (2,3);
 
-select 1 as expected, field_count as actual from lkup_constraint_app where application_id = 1 and constraint_id = 1;
+select 1 as expected, field_count as actual from LKUP_CONSTRAINT_APP where application_id = 1 and constraint_id = 1;
 */
 
 -- No overlaps, trigger enforced.
@@ -259,7 +259,6 @@ delimiter ;
 /*
 insert into LKUP_ENTITY (ENTITY_ID, ENTITY_TX, MOD_BY) VALUES (1, 'Test Entity', 'DFA ADMIN');
 insert into LKUP_FIELD (FIELD_ID, ENTITY_ID, FIELD_TX, MOD_BY) VALUES (1,1,'Test Field', 'DFA ADMIN');
-insert into LKUP_APPLICATION (APPLICATION_ID,APPLICATION_NM,MOD_BY) VALUES (1,'TEST APP','UNIT TEST');
 insert into LKUP_CONSTRAINT (CONSTRAINT_ID,DESCRIPTION_TX,MOD_BY) VALUES (1,'TEST CONSTRAINT','UNIT TEST');
 insert into LKUP_CONSTRAINT_APP (APPLICATION_ID, CONSTRAINT_ID, MOD_BY) VALUES (1,1,'UNIT TEST');
 insert into LKUP_CONSTRAINT_APP_FIELD (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID, MOD_BY) VALUES (1,1,1,'UNIT TEST');
@@ -359,7 +358,7 @@ delimiter ;
 
 -- No creating transitions from inactive states.
 delimiter GO
-CREATE TRIGGER `lkup_event_state_trans_before_insert` BEFORE INSERT ON `lkup_event_state_trans` FOR EACH ROW BEGIN
+CREATE TRIGGER lkup_event_state_trans_before_insert BEFORE INSERT ON LKUP_EVENT_STATE_TRANS FOR EACH ROW BEGIN
 	IF EXISTS (select * from LKUP_STATE where LKUP_STATE.STATE_TYP=NEW.STATE_TYP
 		AND LKUP_STATE.ACTIVE = 0) THEN
 			SIGNAL SQLSTATE '45000' SET message_text='Unable to insert transition for inactive state';
@@ -369,28 +368,27 @@ delimiter ;
 
 -- Unit test these triggers.
 /*
-INSERT INTO lkup_state
+INSERT INTO LKUP_STATE
 	(STATE_TYP, STATE_NM, STATE_TX, MOD_BY)
 	VALUES (1, 'First', 'First State', 'TEST');
-INSERT INTO lkup_state
+INSERT INTO LKUP_STATE
 	(STATE_TYP, STATE_NM, STATE_TX, MOD_BY)
 	VALUES (2, 'Second', 'Second State', 'TEST');
 	
-INSERT INTO lkup_event_state_trans
+INSERT INTO LKUP_EVENT_STATE_TRANS
 	(STATE_TYP, EVENT_TYP, NEXT_STATE_TYP, MOD_BY)
 	VALUES (1, 1, 2, 'TEST');
 	
 
-update LKUP_STATE SET ACTIVE=0; -- Should FAIL.
+update LKUP_STATE SET ACTIVE=0 WHERE STATE_TYP = 1; -- Should FAIL.
 
 -- Now, unit test lkup_event_state_trans_before_insert
-delete from lkup_event_state_trans where STATE_TYP=1 and EVENT_TYP=1;
-update LKUP_STATE SET ACTIVE=0; -- Should SUCCEED.
+delete from LKUP_EVENT_STATE_TRANS where STATE_TYP=1 and EVENT_TYP=1;
+update LKUP_STATE SET ACTIVE=0 WHERE STATE_TYP = 1; -- Should SUCCEED.
 
-INSERT INTO lkup_event_state_trans
+INSERT INTO LKUP_EVENT_STATE_TRANS
 	(STATE_TYP, EVENT_TYP, NEXT_STATE_TYP, MOD_BY)
 	VALUES (1, 1, 2, 'TEST'); -- Sould FAIL.
-
 */
 
 create table LKUP_ACTION_TYP (
