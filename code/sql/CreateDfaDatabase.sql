@@ -17,8 +17,7 @@ These lookup tables are frequently accessed but infrequently modified.
 Therefore, liberally create indices for them.
 *********************************************************************/
 
--- Use bastard stored proc to conditionally create these roles.
-
+-- Use stored proc to conditionally create these roles.
 delimiter GO
 create procedure dfa.createUserAdminRoles() BEGIN
 IF NOT EXISTS (select 1 from mysql.user where user = 'dfa_user') THEN
