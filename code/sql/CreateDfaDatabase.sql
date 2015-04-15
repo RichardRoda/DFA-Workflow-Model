@@ -17,6 +17,26 @@ These lookup tables are frequently accessed but infrequently modified.
 Therefore, liberally create indices for them.
 *********************************************************************/
 
+-- Use bastard stored proc to conditionally create these roles.
+
+delimiter GO
+create procedure dfa.createUserAdminRoles() BEGIN
+IF NOT EXISTS (select 1 from mysql.user where user = 'dfa_user') THEN
+	create role dfa_viewer;
+	create role dfa_user;
+	create role dfa_admin;
+END IF;
+END GO
+delimiter ;
+
+call dfa.createUserAdminRoles();
+
+drop procedure dfa.createUserAdminRoles;
+
+-- dfa_admin automatically gets any dfa_user privilidges.
+grant dfa_viewer to dfa_user;
+grant dfa_user to dfa_admin;
+
 CREATE TABLE LKUP_CONSTRAINT
 	(
 	CONSTRAINT_ID   INT NOT NULL PRIMARY KEY,
@@ -27,6 +47,9 @@ CREATE TABLE LKUP_CONSTRAINT
 	)
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+grant select on LKUP_CONSTRAINT to dfa_viewer;
+grant insert,update,delete on LKUP_CONSTRAINT to dfa_admin;
 
 -- Insert 3 common types for applications.
 -- Note: Non-use of constraint 0 is enforced using 
@@ -54,6 +77,9 @@ CREATE TABLE LKUP_APPLICATION (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_APPLICATION to dfa_viewer;
+grant insert,update,delete on LKUP_APPLICATION to dfa_admin;
+
 INSERT INTO LKUP_APPLICATION
 	(APPLICATION_ID, APPLICATION_NM, APPLICATION_DESC, MOD_BY)
 	VALUES (1, 'Demo', 'DFA Demo', 'DFA Admin');
@@ -71,6 +97,9 @@ CREATE TABLE LKUP_CONSTRAINT_APP (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+grant select on LKUP_CONSTRAINT_APP to dfa_user;
+grant insert,update,delete on LKUP_CONSTRAINT_APP to dfa_admin;
 
 CREATE TABLE LKUP_CONSTRAINT_APP_ROLE
 	(
@@ -92,6 +121,9 @@ CREATE TABLE LKUP_CONSTRAINT_APP_ROLE
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_CONSTRAINT_APP_ROLE to dfa_user;
+grant insert,update,delete on LKUP_CONSTRAINT_APP_ROLE to dfa_admin;
+
 CREATE TABLE LKUP_ENTITY (
 	ENTITY_ID INT NOT NULL PRIMARY KEY,
 	ENTITY_TX VARCHAR(60) NOT NULL,
@@ -100,6 +132,9 @@ CREATE TABLE LKUP_ENTITY (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+grant select on LKUP_ENTITY to dfa_viewer;
+grant insert,update,delete on LKUP_ENTITY to dfa_admin;
 
 CREATE TABLE LKUP_FIELD_TYP (
 	FIELD_TYP_ID SMALLINT NOT NULL PRIMARY KEY,
@@ -110,8 +145,11 @@ CREATE TABLE LKUP_FIELD_TYP (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_FIELD_TYP to dfa_viewer;
+grant insert,update,delete on LKUP_FIELD_TYP to dfa_admin;
+
 insert into LKUP_FIELD_TYP (FIELD_TYP_ID,FIELD_TYP_TX,MOD_BY)
-VALUES (1,'Integer','DFA ADMIN');
+VALUES (1,'Number','DFA ADMIN');
 
 CREATE TABLE LKUP_FIELD (
 	FIELD_ID INT NOT NULL PRIMARY KEY,
@@ -125,6 +163,9 @@ CREATE TABLE LKUP_FIELD (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+grant select on LKUP_FIELD to dfa_viewer;
+grant insert,update,delete on LKUP_FIELD to dfa_admin;
 
 CREATE TABLE LKUP_CONSTRAINT_APP_FIELD (
 	APPLICATION_ID INT NOT NULL,
@@ -140,6 +181,9 @@ CREATE TABLE LKUP_CONSTRAINT_APP_FIELD (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+grant select on LKUP_CONSTRAINT_APP_FIELD to dfa_user;
+grant insert,update,delete on LKUP_CONSTRAINT_APP_FIELD to dfa_admin;
 
 -- Automatically manage the constraint count.
 delimiter GO
@@ -241,6 +285,10 @@ CREATE TABLE LKUP_CONSTRAINT_FIELD_INT_RANGE (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_CONSTRAINT_FIELD_INT_RANGE to dfa_user;
+grant insert,update,delete on LKUP_CONSTRAINT_FIELD_INT_RANGE to dfa_admin;
+
+
 -- Enforce no overlaps.
 delimiter GO
 create trigger LKUP_CONSTRAINT_FIELD_INT_RANGE_BEFORE_INSERT before insert on LKUP_CONSTRAINT_FIELD_INT_RANGE
@@ -313,6 +361,9 @@ CREATE TABLE LKUP_EVENT (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_EVENT to dfa_viewer;
+grant insert,update,delete on LKUP_EVENT to dfa_admin;
+
 -- Insert this one row because it is used as a default value.
 insert into LKUP_EVENT (EVENT_TYP,EVENT_NM,EVENT_TX,MOD_BY) VALUES (1,'Start','Start Action','DFA-Create');
 COMMIT;
@@ -339,6 +390,9 @@ create table LKUP_STATE (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_STATE to dfa_viewer;
+grant insert,update,delete on LKUP_STATE to dfa_admin;
+
 create table LKUP_EVENT_STATE_TRANS (
 	STATE_TYP INT NOT NULL,
 	EVENT_TYP INT NOT NULL,
@@ -356,6 +410,9 @@ create table LKUP_EVENT_STATE_TRANS (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+grant select on LKUP_EVENT_STATE_TRANS to dfa_viewer;
+grant insert,update,delete on LKUP_EVENT_STATE_TRANS to dfa_admin;
 
 alter table LKUP_STATE ADD CONSTRAINT FOREIGN KEY (STATE_TYP,EXPECTED_NEXT_EVENT) 
 	REFERENCES LKUP_EVENT_STATE_TRANS (STATE_TYP,EVENT_TYP);
@@ -429,6 +486,9 @@ create table LKUP_WORKFLOW_TYP (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_WORKFLOW_TYP to dfa_viewer;
+grant insert,update,delete on LKUP_WORKFLOW_TYP to dfa_admin;
+
 create table LKUP_WORKFLOW_STATE_TYP_CREATE (
 	STATE_TYP INT NOT NULL,
 	WORKFLOW_TYP INT NOT NULL,
@@ -444,6 +504,8 @@ create table LKUP_WORKFLOW_STATE_TYP_CREATE (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on LKUP_WORKFLOW_STATE_TYP_CREATE to dfa_user;
+grant insert,update,delete on LKUP_WORKFLOW_STATE_TYP_CREATE to dfa_admin;
 
 create table DFA_WORKFLOW (
 	DFA_WORKFLOW_ID BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
@@ -460,6 +522,11 @@ create table DFA_WORKFLOW (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+grant select on DFA_WORKFLOW to dfa_user;
+grant update (COMMENT_TX,MOD_BY) on DFA_WORKFLOW to dfa_user;
+grant insert,update,delete on DFA_WORKFLOW to dfa_admin;
+
 
 create table DFA_WORKFLOW_STATE (
 	DFA_WORKFLOW_ID BIGINT UNSIGNED NOT NULL,
@@ -488,6 +555,10 @@ create table DFA_WORKFLOW_STATE (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select on DFA_WORKFLOW_STATE to dfa_user;
+grant update (EVENT_TYP,COMMENT_TX,MOD_BY) on DFA_WORKFLOW_STATE to dfa_user;
+grant insert,update,delete on DFA_WORKFLOW_STATE to dfa_admin;
+
 alter table DFA_WORKFLOW ADD CONSTRAINT FOREIGN KEY (SPAWN_DFA_WORKFLOW_ID,SPAWN_DFA_STATE_ID) REFERENCES DFA_WORKFLOW_STATE (DFA_WORKFLOW_ID,DFA_STATE_ID);
 
 -- Workaround for MariaDB limitation of not being able to clear is current
@@ -502,6 +573,8 @@ create table tmp_dfa_clear_current (
     FOREIGN KEY (DFA_WORKFLOW_ID,DFA_STATE_ID) REFERENCES DFA_WORKFLOW_STATE (DFA_WORKFLOW_ID,DFA_STATE_ID)
 )COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+
+-- No grants, runs in context of the stored proc (i.e. as root).
 
 delimiter GO
 CREATE TRIGGER tmp_dfa_clear_current_AFTER_DELETE AFTER DELETE ON tmp_dfa_clear_current
@@ -634,6 +707,8 @@ create table tmp_dfa_workflow_state (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select,insert,update,delete on tmp_dfa_workflow_state to dfa_admin;
+
 delimiter GO
 CREATE TRIGGER tmp_dfa_workflow_state_before_insert BEFORE INSERT ON tmp_dfa_workflow_state FOR EACH ROW BEGIN
 	SET NEW.CONN_ID = CONNECTION_ID();
@@ -643,8 +718,12 @@ delimiter ;
 create or replace view ref_dfa_workflow_state AS
 	select REF_ID, DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT from tmp_dfa_workflow_state where CONN_ID = CONNECTION_ID();
 
+grant select,insert,update,delete on ref_dfa_workflow_state to dfa_user;
+
 create or replace view session_dfa_workflow_state AS
 	select DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT from tmp_dfa_workflow_state where CONN_ID = CONNECTION_ID() AND REF_ID=0;
+
+grant select,insert,update,delete on session_dfa_workflow_state to dfa_user;
 
 create table tmp_user_role (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -655,6 +734,8 @@ create table tmp_user_role (
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
 
+grant select,insert,update,delete on tmp_user_role to dfa_admin;
+
 delimiter GO
 CREATE TRIGGER tmp_user_role_before_insert BEFORE INSERT ON tmp_user_role FOR EACH ROW BEGIN
 	SET NEW.CONN_ID = CONNECTION_ID();
@@ -664,9 +745,12 @@ delimiter ;
 create or replace view ref_user_role as 
 	SELECT REF_ID, ROLE_NM FROM tmp_user_role where CONN_ID = CONNECTION_ID();
 	
+grant select,insert,update,delete on ref_user_role to dfa_user;
+
 create or replace view session_user_role as 
 	SELECT ROLE_NM FROM tmp_user_role where CONN_ID = CONNECTION_ID() AND REF_ID = 0;
 	
+grant select,insert,update,delete on session_user_role to dfa_user;
 
 create table tmp_dfa_field_value (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -676,6 +760,7 @@ create table tmp_dfa_field_value (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+grant select,insert,update,delete on tmp_dfa_field_value to dfa_admin;
 
 delimiter GO
 CREATE TRIGGER tmp_dfa_field_value_before_insert BEFORE INSERT ON tmp_dfa_field_value FOR EACH ROW BEGIN
@@ -685,7 +770,9 @@ delimiter ;
 
 create or replace view session_dfa_field_value as
 	select FIELD_ID, FIELD_VALUE from tmp_dfa_field_value where CONN_ID = CONNECTION_ID();
-	
+
+grant select,insert,update,delete on session_dfa_field_value to dfa_user;
+
 create table tmp_dfa_constraint (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,
 	REF_ID  MEDIUMINT DEFAULT 0 NOT NULL,
@@ -699,6 +786,7 @@ create table tmp_dfa_constraint (
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB;
+grant select,insert,update,delete on tmp_dfa_constraint to dfa_admin;
 
 delimiter GO
 CREATE TRIGGER tmp_dfa_constraint_before_insert BEFORE INSERT ON tmp_dfa_constraint FOR EACH ROW BEGIN
@@ -709,8 +797,11 @@ delimiter ;
 create or replace view ref_dfa_constraint as 
 	SELECT REF_ID, CONSTRAINT_ID, ALLOW_UPDATE, IS_RESPONSIBLE FROM tmp_dfa_constraint where CONN_ID = CONNECTION_ID();
 	
+grant select,insert,update,delete on ref_dfa_constraint to dfa_user;
+
 create or replace view session_dfa_constraint as 
 	SELECT CONSTRAINT_ID, ALLOW_UPDATE, IS_RESPONSIBLE FROM tmp_dfa_constraint where CONN_ID = CONNECTION_ID() AND REF_ID = 0;
+grant select,insert,update,delete on session_dfa_constraint to dfa_user;
 	
 delimiter GO
 CREATE TRIGGER DFA_WORKFLOW_STATE_AFTER_INSERT AFTER INSERT ON DFA_WORKFLOW_STATE FOR EACH ROW BEGIN
