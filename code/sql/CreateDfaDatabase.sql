@@ -577,7 +577,7 @@ VALUES (1,'Test Workflow','Workflow Test',1,1,1,'Test');
 insert session_dfa_constraint (CONSTRAINT_ID, ALLOW_UPDATE, IS_RESPONSIBLE)
 VALUES (1,1,0);
 
-SET @dfa_system_constraint_ref_id=0;
+SET @dfa_act_state_ref_id=0;
 
 select concat(convert(current_timestamp(), char), ' Test') INTO @dfa_workflow_insert_unit_test;
 
@@ -612,7 +612,9 @@ delete from tmp_dfa_clear_current where tmp_dfa_clear_current.DFA_WORKFLOW_ID = 
 
 -- OK, verify the results.
 
-SELECT * FROM DFA_WORKFLOW_STATE WHERE DFA_WORKFLOW_ID = @dfa_workflow_insert_ut_id;
+select CASE WHEN (SELECT count(*) FROM DFA_WORKFLOW_STATE WHERE DFA_WORKFLOW_ID = @dfa_workflow_insert_ut_id) = 
+(select count(*) from session_dfa_workflow_state sdws where sdws.DFA_WORKFLOW_ID = @dfa_workflow_insert_ut_id and sdws.OUTPUT=1)
+	THEN 'PASS' ELSE 'FAIL' END as RESULT;
 
 SELECT CASE WHEN IS_PASSIVE=0 AND UNDO_STATE_ID IS NULL AND PARENT_STATE_ID=1 THEN 'PASS' ELSE 'FAIL 1' END as RESULT from DFA_WORKFLOW_STATE where DFA_WORKFLOW_ID = @dfa_workflow_insert_ut_id AND DFA_STATE_ID=1
 UNION SELECT CASE WHEN IS_PASSIVE=0 AND PARENT_STATE_ID=2 AND UNDO_STATE_ID = 1 THEN 'PASS' ELSE 'FAIL 2' END as RESULT from DFA_WORKFLOW_STATE where DFA_WORKFLOW_ID = @dfa_workflow_insert_ut_id AND DFA_STATE_ID=2
@@ -712,22 +714,18 @@ create or replace view session_dfa_constraint as
 	
 delimiter GO
 CREATE TRIGGER DFA_WORKFLOW_STATE_AFTER_INSERT AFTER INSERT ON DFA_WORKFLOW_STATE FOR EACH ROW BEGIN
-	DECLARE dfa_system_constraint_ref_id MEDIUMINT default 0;
-	DECLARE WORKFLOW_TYP INT DEFAULT NULL;
-	DECLARE SUB_STATE BIT;
-
-	IF (@dfa_system_constraint_ref_id IS NOT NULL AND @dfa_system_constraint_ref_id >=0) THEN
-		set dfa_system_constraint_ref_id = @dfa_system_constraint_ref_id;
-	END IF;
-	
 	IF (@dfa_act_state_ref_id >= 0) THEN
-		insert into tmp_dfa_workflow_state (REF_ID, DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
-		VALUES (CONNECTION_ID(), @dfa_session_ref_id, NEW.DFA_WORKFLOW_ID, NEW.DFA_STATE_ID, 1);
+		insert into tmp_dfa_workflow_state (CONN_ID, REF_ID, DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
+		VALUES (CONNECTION_ID(), @dfa_act_state_ref_id, NEW.DFA_WORKFLOW_ID, NEW.DFA_STATE_ID, 1);
 	END IF;
 	
     /*
     -- This code will have to be moved to a stored proc.
 	IF EXISTS (SELECT * FROM LKUP_WORKFLOW_STATE_TYP_CREATE WHERE STATE_TYP = NEW.STATE_TYP) THEN 
+	DECLARE dfa_system_constraint_ref_id MEDIUMINT default 0;
+	DECLARE WORKFLOW_TYP INT DEFAULT NULL;
+	DECLARE SUB_STATE BIT;
+
 		select lwstc.WORKFLOW_TYP, lwstc.SUB_STATE into WORKFLOW_TYP, SUB_STATE
 		FROM LKUP_WORKFLOW_STATE_TYP_CREATE lwstc join ref_dfa_constraint create_constraint ON
 			create_constraint.CONSTRAINT_ID = lwstc.CONSTRAINT_ID AND create_constraint.REF_ID = dfa_system_constraint_ref_id
