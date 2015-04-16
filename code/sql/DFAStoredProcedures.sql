@@ -1,17 +1,61 @@
 
-DROP PROCEDURE IF EXISTS dfa.sp_startWorkflow;
+use dfa;
+
+drop procedure if exists dfa.processSubActions;
 delimiter GO
-CREATE PROCEDURE dfa.sp_startWorkflow(workflowTyp INT, commentTx MEDIUMTEXT, modBy VARCHAR(32), raiseError BIT, refConstraintId INT, OUT dfaWorkflowId BIGINT UNSIGNED) 
+create procedure dfa.processSubActions(spawnDfaWorkflowId BIGINT UNSIGNED, originalDfaStateId MEDIUMINT UNSIGNED) 
+	MODIFIES SQL DATA
+BEGIN
+	DECLARE SUB_WORKFLOW VARCHAR(128) default NULL;
+	declare cursor_done, subState bit default false;
+	declare nestedWorkflowTyp INT;
+	declare nestedDfaWorkflowId BIGINT UNSIGNED;
+	declare stateTyp INT;
+	declare spawnDfaStateId MEDIUMINT UNSIGNED;
+	declare state_typ_create cursor for select LKUP_WORKFLOW_STATE_TYP_CREATE.WORKFLOW_TYP, LKUP_WORKFLOW_STATE_TYP_CREATE.SUB_STATE 
+		from LKUP_WORKFLOW_STATE_TYP_CREATE where LKUP_WORKFLOW_STATE_TYP_CREATE.STATE_TYP = stateTyp ORDER BY LKUP_WORKFLOW_STATE_TYP_CREATE.WORKFLOW_TYP;
+	DECLARE CONTINUE HANDLER FOR NOT FOUND SET cursor_done = TRUE;
+
+	IF EXISTS (select 1 from LKUP_WORKFLOW_STATE_TYP_CREATE JOIN DFA_WORKFLOW_STATE ON LKUP_WORKFLOW_STATE_TYP_CREATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
+		WHERE DFA_WORKFLOW_ID = spawnDfaWorkflowId AND DFA_STATE_ID <> originalDfaStateId AND IS_CURRENT = 1) THEN
+
+      select concat('Started because ', LKUP_EVENT.EVENT_NM, ' on workflow ', LKUP_WORKFLOW_TYP.WORKFLOW_NM, ' entered state ', LKUP_STATE.STATE_NM), DFA_WORKFLOW_STATE.DFA_STATE_ID, DFA_WORKFLOW_STATE.STATE_TYP into SUB_WORKFLOW, spawnDfaStateId, stateTyp
+      	from DFA_WORKFLOW_STATE 
+      	JOIN LKUP_STATE ON LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
+      	JOIN LKUP_EVENT ON LKUP_EVENT.EVENT_TYP = DFA_WORKFLOW_STATE.EVENT_TYP
+      	JOIN DFA_WORKFLOW ON DFA_WORKFLOW.DFA_WORKFLOW_ID = spawnDfaWorkflowId
+      	JOIN LKUP_WORKFLOW_TYP ON LKUP_WORKFLOW_TYP.WORKFLOW_TYP = DFA_WORKFLOW.WORKFLOW_TYP
+			WHERE DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = spawnDfaWorkflowId AND IS_CURRENT = 1;
+
+		open state_typ_create;
+	-- handle any sub-workflows.
+    read_loop: LOOP
+      FETCH state_typ_create into nestedWorkflowTyp, subState;
+      IF cursor_done THEN
+		  close state_typ_create;
+        LEAVE read_loop;
+      END IF;      
+      CALL dfa.sp_do_startWorkflow(nestedWorkflowTyp, SUB_WORKFLOW, modBy, 0, refConstraintId, spawnDfaWorkflowId, spawnDfaStateId, subState, nestedDfaWorkflowId);
+      END LOOP;
+	END IF;	
+END GO
+delimiter ;
+
+DROP PROCEDURE IF EXISTS dfa.sp_do_startWorkflow;
+delimiter GO
+CREATE PROCEDURE dfa.sp_do_startWorkflow(workflowTyp INT, commentTx MEDIUMTEXT, modBy VARCHAR(32), raiseError BIT, refConstraintId INT, spawnDfaWorkflowId BIGINT UNSIGNED, spawnDfaStateId MEDIUMINT UNSIGNED, subState BIT, OUT dfaWorkflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA
 BEGIN
 	DECLARE ERROR_TX VARCHAR(128);
+		
 	IF EXISTS (select * from ref_dfa_constraint join LKUP_WORKFLOW_TYP ON 
 		LKUP_WORKFLOW_TYP.CONSTRAINT_ID = ref_dfa_constraint.CONSTRAINT_ID
         where REF_ID = refConstraintId and ALLOW_UPDATE=1) THEN
-		INSERT INTO DFA_WORKFLOW (WORKFLOW_TYP,COMMENT_TX,MOD_BY)
-			VALUES (workflowTyp, commentTx, modBy);	
+		INSERT INTO DFA_WORKFLOW (WORKFLOW_TYP,COMMENT_TX,MOD_BY,SPAWN_DFA_WORKFLOW_ID,SPAWN_DFA_STATE_ID,SUB_STATE)
+			VALUES (workflowTyp, commentTx, modBy,SPAWN_DFA_WORKFLOW_ID,SPAWN_DFA_STATE_ID,SUB_STATE);	
 		SET dfaWorkflowId =  LAST_INSERT_ID();
         update DFA_WORKFLOW_STATE SET COMMENT_TX = 'Workflow started' where DFA_WORKFLOW_ID = dfaWorkflowId AND IS_CURRENT = 1;
+		CALL dfa.processSubActions(dfaWorkflowId, 0);
     ELSE
 		SET dfaWorkflowId = NULL;
         if (raiseError = 1) THEN
@@ -23,7 +67,19 @@ BEGIN
 END GO
 delimiter ;
 
-grant EXECUTE on dfa.sp_startWorkflow to dfa_user;
+
+
+DROP PROCEDURE IF EXISTS dfa.sp_startWorkflow;
+delimiter GO
+CREATE PROCEDURE dfa.sp_startWorkflow(workflowTyp INT, commentTx MEDIUMTEXT, modBy VARCHAR(32), raiseError BIT, refConstraintId INT, OUT dfaWorkflowId BIGINT UNSIGNED) 
+	MODIFIES SQL DATA
+BEGIN
+	CALL dfa.sp_do_startWorkflow(workflowTyp, commentTx, modBy, raiseError, refConstraintId, NULL, NULL, FALSE, dfaWorkflowId);
+END GO
+delimiter ;
+
+grant ALL on dfa.sp_startWorkflow to dfa_user;
+flush PRIVILEGES;
 
 /*
 -- Unit test for dfa.sp_startWorkflow
