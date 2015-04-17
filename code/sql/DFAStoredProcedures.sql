@@ -61,19 +61,15 @@ with dfa.processSubActions, meaning that a workflow may recursively spawn an arb
     
 /* Change the reserved */
 
-	select 1 as DATA_AND_CONSTRAINTS;
-    
     CALL dfa.sp_processNewDfaDataAndConstraints(workflowTyp);
-		
-	select 1 as PAST_DATA_AND_CONSTRAINTS;
-        
+
 	IF EXISTS (select * from ref_dfa_constraint join LKUP_WORKFLOW_TYP ON 
 		LKUP_WORKFLOW_TYP.CONSTRAINT_ID = ref_dfa_constraint.CONSTRAINT_ID
         where REF_ID = refConstraintId and ALLOW_UPDATE=1) THEN
-		select 1 as ABOUT_TO_INSERT_DFA_WORKFLOW;
+
 		INSERT INTO DFA_WORKFLOW (WORKFLOW_TYP,COMMENT_TX,MOD_BY,SPAWN_DFA_WORKFLOW_ID,SPAWN_DFA_STATE_ID,SUB_STATE)
 			VALUES (workflowTyp, commentTx, modBy,spawnDfaWorkflowId,spawnDfaStateId,subState);	
-		select 1 as INSERTED_DFA_WORKFLOW;
+
 		SET dfaWorkflowId =  LAST_INSERT_ID();
         update DFA_WORKFLOW_STATE SET COMMENT_TX = 'Workflow started' where DFA_WORKFLOW_ID = dfaWorkflowId AND IS_CURRENT = 1;
 		CALL dfa.processSubActions(dfaWorkflowId, 0);
@@ -105,7 +101,7 @@ with ref_data_constraint.REF_ID = @dfa_act_state_ref_id.
 END GO
 delimiter ;
 
-grant ALL on dfa.sp_startWorkflow to dfa_user;
+grant EXECUTE ON PROCEDURE dfa.sp_startWorkflow to dfa_user;
 
 DROP PROCEDURE IF EXISTS dfa.sp_processValidRefConstraints;
 delimiter GO
@@ -195,7 +191,6 @@ use of INVOKER.
 ***************************************************************/
 -- Workaround for fact that mariaDB does not support local variables.
 -- Use fully qualified variable name to avoid collisions in global space.
-	SET ROLE dfa_data;
 	SET @dfaSpProcessValidConstraintsDfaWorkflowId = dfaWorkflowId;
 	execute application_data_populate_proc using @dfaSpProcessValidConstraintsDfaWorkflowId;
 END GO
@@ -248,7 +243,7 @@ END IF;
 END GO
 delimiter ;
 
-grant ALL on dfa.sp_processValidConstraints to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_processValidConstraints to dfa_view;
 
 drop procedure if exists dfa.sp_processDfaDataForExisting;
 delimiter GO
@@ -289,16 +284,13 @@ delimiter GO
 CREATE PROCEDURE dfa.sp_processAppDataConstraints(dfaWorkflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA
 BEGIN
-select 1 as before_dfa_sp_processValidConstraints;
-CALL dfa.sp_processValidConstraints(1, dfaWorkflowId);
-select 1 as after_dfa_sp_processValidConstraints;
 
-select 1 as before_dfa_user_sp_processValidConstraints;
+CALL dfa.sp_processValidConstraints(1, dfaWorkflowId);
+
 IF (@dfa_user_application_id IS NOT NULL) THEN
 	CALL dfa.sp_execUntrustedApplicationDataProc(dfaWorkflowId);
 	CALL dfa.sp_processValidConstraints(@dfa_user_application_id, dfaWorkflowId);
 END IF;
-select 1 as after_dfa_user_sp_processValidConstraints;
 
 END GO
 delimiter ;
@@ -331,7 +323,7 @@ END IF;
 END GO
 delimiter ;
 
-grant ALL on dfa.sp_processDfaDataAndConstraints to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_processDfaDataAndConstraints to dfa_view;
 
 drop procedure if exists dfa.sp_processNewDfaDataAndConstraints;
 delimiter GO
@@ -363,11 +355,7 @@ select 1, 3, START_EVENT_TYP from LKUP_WORKFLOW_TYP where LKUP_WORKFLOW_TYP.WORK
 insert into session_dfa_field_value (DFA_WORKFLOW_ID,FIELD_ID,INT_VALUE)
 VALUES (1, 4, dfaWorkflowTyp); -- The new workflow type.
 
-select 1 as BEFORE_processAppDataConstraints;
-
 CALL dfa.sp_processAppDataConstraints(1);
-
-select 1 as AFTER_processAppDataConstraints;
 
 IF needsWorkflowId THEN
 	delete from session_dfa_workflow_state where DFA_WORKFLOW_ID = 1 AND DFA_STATE_ID=1;
@@ -376,7 +364,7 @@ END IF;
 END GO
 delimiter ;
 
-grant ALL on dfa.sp_processNewDfaDataAndConstraints to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_processNewDfaDataAndConstraints to dfa_view;
 
 drop procedure if exists dfa.sp_processNullApplicationData;
 delimiter GO
@@ -391,7 +379,7 @@ be re-populated when state changes.
 END GO
 delimiter ;
 
-grant EXECUTE ON PROCEDURE dfa.sp_processNullApplicationData to dfa_data;
+grant EXECUTE ON PROCEDURE dfa.sp_processNullApplicationData to dfadataexecutor@localhost;
 
 drop procedure if exists dfa.sp_cleanupSessionData;
 delimiter GO
@@ -407,7 +395,7 @@ delete from session_dfa_field_value where 1=1;
 END GO
 delimiter ;
 
-grant ALL ON dfa.sp_cleanupSessionData to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_cleanupSessionData to dfa_view;
 
 drop procedure if exists dfa.sp_configureForApplication;
 delimiter GO
@@ -461,7 +449,7 @@ END IF;
 END GO
 delimiter ;
 
-grant ALL on dfa.sp_configureForApplication to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_configureForApplication to dfa_view;
 
 flush PRIVILEGES;
 
