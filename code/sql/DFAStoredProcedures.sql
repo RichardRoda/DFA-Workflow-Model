@@ -100,10 +100,10 @@ grant ALL on dfa.sp_startWorkflow to dfa_user;
 
 DROP PROCEDURE IF EXISTS dfa.sp_processValidRefConstraints;
 delimiter GO
-CREATE PROCEDURE dfa.sp_processValidRefConstraints(applicationId INT, refId MEDIUMINT) 
+CREATE PROCEDURE dfa.sp_processValidRefConstraints(applicationId INT, workflowId BIGINT UNSIGNED, refId MEDIUMINT) 
 	MODIFIES SQL DATA
 BEGIN
-insert into ref_dfa_constraint (REF_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
+insert into ref_dfa_constraint (REF_ID,DFA_WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
 SELECT refId as REF_ID, LKUP_CONSTRAINT_APP.CONSTRAINT_ID, 
 	case when LKUP_CONSTRAINT_APP.ROLE_COUNT = 0 OR exists (
 			select * FROM LKUP_CONSTRAINT_APP_ROLE JOIN session_user_role ON session_user_role.ROLE_NM = LKUP_CONSTRAINT_APP_ROLE.ROLE_NM
@@ -111,7 +111,8 @@ SELECT refId as REF_ID, LKUP_CONSTRAINT_APP.CONSTRAINT_ID,
     ) THEN TRUE ELSE FALSE END
      as ALLOW_UPDATE, 
 	0 as IS_RESPONSIBLE
-	from LKUP_CONSTRAINT_APP where LKUP_CONSTRAINT_APP.APPLICATION_ID = applicationId
+	from LKUP_CONSTRAINT_APP JOIN session_dfa_workflow_state ON (workflowId IS NULL OR session_dfa_workflow_state.DFA_WORKFLOW_ID = workflowId)
+	where LKUP_CONSTRAINT_APP.APPLICATION_ID = applicationId
 		AND (LKUP_CONSTRAINT_APP.ROLE_COUNT = 0 OR EXISTS (
 			select * FROM LKUP_CONSTRAINT_APP_ROLE JOIN session_user_role ON session_user_role.ROLE_NM = LKUP_CONSTRAINT_APP_ROLE.ROLE_NM
 				WHERE IS_SHOW=1 AND LKUP_CONSTRAINT_APP_ROLE.APPLICATION_ID = LKUP_CONSTRAINT_APP.APPLICATION_ID AND LKUP_CONSTRAINT_APP_ROLE.CONSTRAINT_ID = LKUP_CONSTRAINT_APP
@@ -122,17 +123,17 @@ SELECT refId as REF_ID, LKUP_CONSTRAINT_APP.CONSTRAINT_ID,
             will match. */
 			(select count(DISTINCT LKUP_CONSTRAINT_APP_FIELD.FIELD_ID) from LKUP_CONSTRAINT_APP_FIELD JOIN LKUP_FIELD ON LKUP_CONSTRAINT_APP_FIELD.FIELD_ID = LKUP_FIELD.FIELD_ID
 				LEFT JOIN session_dfa_field_value ON session_dfa_field_value.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID
-                LEFT JOIN LKUP_CONSTRAINT_FIELD_INT_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 1 AND session_dfa_field_value.INT_VALUE IS NOT NULL 
+                LEFT JOIN LKUP_CONSTRAINT_FIELD_INT_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 1 AND session_dfa_field_value.DFA_WORKFLOW_ID = session_dfa_workflow_state.DFA_WORKFLOW_ID AND session_dfa_field_value.INT_VALUE IS NOT NULL 
 					AND LKUP_CONSTRAINT_FIELD_INT_RANGE.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.APPLICATION_ID = LKUP_CONSTRAINT_FIELD_INT_RANGE.APPLICATION_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.CONSTRAINT_ID = LKUP_CONSTRAINT_FIELD_INT_RANGE.CONSTRAINT_ID AND
 					session_dfa_field_value.INT_VALUE BETWEEN LKUP_CONSTRAINT_FIELD_INT_RANGE.SMALLEST_VALUE AND RANGE_TABLE.LARGEST_VALUE
-                LEFT JOIN LKUP_CONSTRAINT_FIELD_DATE_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 3 AND session_dfa_field_value.DATE_VALUE IS NOT NULL 
+                LEFT JOIN LKUP_CONSTRAINT_FIELD_DATE_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 3 AND session_dfa_field_value.DFA_WORKFLOW_ID = session_dfa_workflow_state.DFA_WORKFLOW_ID AND session_dfa_field_value.DATE_VALUE IS NOT NULL 
 					AND LKUP_CONSTRAINT_FIELD_DATE_RANGE.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.APPLICATION_ID = LKUP_CONSTRAINT_FIELD_DATE_RANGE.APPLICATION_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.CONSTRAINT_ID = LKUP_CONSTRAINT_FIELD_DATE_RANGE.CONSTRAINT_ID AND
 					session_dfa_field_value.DATE_VALUE BETWEEN LKUP_CONSTRAINT_FIELD_DATE_RANGE.SMALLEST_VALUE AND LKUP_CONSTRAINT_FIELD_DATE_RANGE.LARGEST_VALUE
-                LEFT JOIN LKUP_CONSTRAINT_FIELD_BIT ON LKUP_FIELD.FIELD_TYP_ID = 2 AND session_dfa_field_value.BIT_VALUE IS NOT NULL
+                LEFT JOIN LKUP_CONSTRAINT_FIELD_BIT ON LKUP_FIELD.FIELD_TYP_ID = 2 AND session_dfa_field_value.DFA_WORKFLOW_ID = session_dfa_workflow_state.DFA_WORKFLOW_ID AND session_dfa_field_value.BIT_VALUE IS NOT NULL
 					AND LKUP_CONSTRAINT_FIELD_BIT.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.APPLICATION_ID = LKUP_CONSTRAINT_FIELD_BIT.APPLICATION_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.CONSTRAINT_ID = LKUP_CONSTRAINT_FIELD_BIT.CONSTRAINT_ID AND
@@ -164,7 +165,7 @@ delimiter ;
 
 DROP PROCEDURE IF EXISTS dfa.sp_processValidConstraints;
 delimiter GO
-CREATE PROCEDURE dfa.sp_processValidConstraints(applicationId INT) 
+CREATE PROCEDURE dfa.sp_processValidConstraints(applicationId INT, workflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA
 BEGIN
 /********************************************
@@ -179,25 +180,58 @@ constraints (the session constraints + 'SYSTEM' role
 added).
 *********************************************/
 
+IF (@dfa_system_role_nm IS NULL) THEN
+	SET @dfa_system_role_nm = 'SYSTEM';
+END IF;
+
 delete from ref_dfa_constraint where REF_ID IN (0,1)
 	and ref_dfa_constraint.CONSTRAINT_ID IN (select CONSTRAINT_ID from LKUP_CONSTRAINT_APP where APPLICATION_ID = applicationId);
 
-CALL sp_processValidRefConstraints(applicationId, 0);
-IF exists (select * from session_user_role where session_user_role.role_nm = 'SYSTEM') THEN
+CALL dfa.sp_processValidRefConstraints(applicationId, workflowId, 0);
+IF exists (select * from session_user_role where session_user_role.role_nm = @dfa_system_role_nm) THEN
 -- System already present, copy the primary constraints to the system constraints.
 	INSERT INTO ref_dfa_constraint (REF_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
     select 1, CONSTRAINT_ID, ALLOW_UPDATE,IS_RESPONSIBLE from session_dfa_constraint;
 ELSE
 -- Temporarly add system to session role table, compute roles for refid 1, and then remove system role.
-	insert into session_user_role (ROLE_NM) VALUES ('SYSTEM');
-    CALL sp_processValidRefConstraints(applicationId, 1);
-    delete from session_user_role where ROLE_NM='SYSTEM';
+	insert into session_user_role (ROLE_NM) VALUES (@dfa_system_role_nm);
+    CALL dfa.sp_processValidRefConstraints(applicationId, workflowId, 1);
+    delete from session_user_role where ROLE_NM=@dfa_system_role_nm;
 END IF;
 
 END GO
 delimiter ;
 
 grant ALL on dfa.sp_processValidConstraints to dfa_view;
+
+drop procedure if exists dfa.sp_processDfaDataAndConstraints;
+delimiter GO
+CREATE PROCEDURE dfa.sp_processDfaDataAndConstraints(dfaWorkflowId BIGINT UNSIGNED) 
+	MODIFIES SQL DATA
+BEGIN
+
+declare needsWorkflowId BIT DEFAULT false;
+
+set needsWorkflowId = dfaWorkflowId IS NOT NULL AND not exists (select * from session_dfa_workflow_state where DFA_WORKFLOW_ID = dfaWorkflowId);
+
+IF needsWorkflowId THEN
+	insert into session_dfa_workflow_state (DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
+	select DFA_WORKFLOW_ID, DFA_STATE_ID, 0 as OUTPUT from DFA_WORKFLOW_STATE 
+		where DFA_WORKFLOW_ID = dfaWorkflowId and IS_CURRENT = 1;
+END IF;
+
+CALL dfa.sp_processValidConstraints(1, dfaWorkflowId);
+insert ref_dfa_constraint (REF_ID, DFA_WORKFLOW_ID, CONSTRAINT_ID, ALLOW_UPDATE)
+select 1, DFA_WORKFLOW_ID, 2, 1 from session_dfa_workflow_state where dfaWorkflowId IS NULL OR DFA_WORKFLOW_ID = dfaWorkflowId;
+
+IF needsWorkflowId THEN
+	delete from session_dfa_workflow_state where DFA_WORKFLOW_ID = dfaWorkflowId;
+END IF;
+
+END GO
+delimiter ;
+
+grant ALL on dfa.sp_processDfaDataAndConstraints to dfa_view;
 
 flush PRIVILEGES;
 
