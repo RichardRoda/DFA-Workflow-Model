@@ -8,6 +8,8 @@ Note: In MySql, the length specified for the int is a display width for
 a result set, and has no effect on the range of the datatype.
 ******************************************************************************/
 
+use mysql;
+
 drop database dfa;
 create database dfa;
 use dfa;
@@ -21,9 +23,17 @@ Therefore, liberally create indices for them.
 delimiter GO
 create procedure dfa.createUserAdminRoles() BEGIN
 IF NOT EXISTS (select 1 from mysql.user where user = 'dfa_user') THEN
+	create role dfa_data;
 	create role dfa_viewer;
 	create role dfa_user;
 	create role dfa_admin;
+    -- The intent of the user below is not to be able to log in, but 
+    -- to create a definer to execute application stored procedures
+    -- in a limited security context.  This hash is a series of hex digits
+    -- from random.org.  If you figure out what it is, let me know :),
+    
+    create user dfadataexecutor@localhost IDENTIFIED BY PASSWORD '7d9143066efc8b954bc44aff1ef26722e1fd49792';
+    grant dfa_data to dfadataexecutor@localhost;
 END IF;
 END GO
 delimiter ;
@@ -191,6 +201,7 @@ grant select on LKUP_ENTITY to dfa_viewer;
 grant insert,update,delete on LKUP_ENTITY to dfa_admin;
 
 insert into LKUP_ENTITY (ENTITY_ID,ENTITY_TX,MOD_BY) VALUES (1,'DFA_WORKFLOW_STATE', 'DFA Admin');
+insert into LKUP_ENTITY (ENTITY_ID,ENTITY_TX,MOD_BY) VALUES (2,'DFA_WORKFLOW', 'DFA Admin');
 
 CREATE TABLE LKUP_FIELD_TYP (
 	FIELD_TYP_ID SMALLINT NOT NULL PRIMARY KEY,
@@ -234,10 +245,28 @@ COMMENT='Specified a logical field (not necessiarly a database table.field).  Th
 grant select on LKUP_FIELD to dfa_viewer;
 grant insert,update,delete on LKUP_FIELD to dfa_admin;
 
-INSERT INTO `dfa`.`LKUP_FIELD`
-(`FIELD_ID`,`FIELD_TYP_ID`,`ENTITY_ID`,`FIELD_TX`,`MOD_BY`)
+-- The following 4 fields do not exist for NEW
+-- workflows:
+INSERT INTO LKUP_FIELD
+(FIELD_ID,FIELD_TYP_ID,ENTITY_ID,FIELD_TX,MOD_BY)
 VALUES
-(1,2,1,'DFA Undoable','DFA Admin');
+(1,2,1,'Current DFA Undoable','DFA Admin');
+
+-- The following 3 are provided for use by user applications.
+INSERT INTO LKUP_FIELD
+(FIELD_ID,FIELD_TYP_ID,ENTITY_ID,FIELD_TX,MOD_BY)
+VALUES
+(2,1,1,'Current DFA State Type','DFA Admin');
+
+INSERT INTO LKUP_FIELD
+(FIELD_ID,FIELD_TYP_ID,ENTITY_ID,FIELD_TX,MOD_BY)
+VALUES
+(3,1,1,'Current DFA Event Type','DFA Admin');
+
+INSERT INTO LKUP_FIELD
+(FIELD_ID,FIELD_TYP_ID,ENTITY_ID,FIELD_TX,MOD_BY)
+VALUES
+(4,1,2,'Current DFA Workflow Type', 'DFA Admin');
 
 
 CREATE TABLE LKUP_CONSTRAINT_APP_FIELD (
@@ -889,7 +918,7 @@ create table tmp_dfa_workflow_state (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,
 	REF_ID  MEDIUMINT DEFAULT 0 NOT NULL,
 	DFA_WORKFLOW_ID BIGINT UNSIGNED NOT NULL,
-	DFA_STATE_ID MEDIUMINT UNSIGNED NOT NULL,
+	DFA_STATE_ID MEDIUMINT UNSIGNED DEFAULT 1 NOT NULL,
 	OUTPUT BIT DEFAULT false,
 	PRIMARY KEY (CONN_ID,REF_ID,DFA_WORKFLOW_ID,DFA_STATE_ID),
 	FOREIGN KEY (DFA_WORKFLOW_ID,DFA_STATE_ID) REFERENCES DFA_WORKFLOW_STATE (DFA_WORKFLOW_ID,DFA_STATE_ID),
@@ -916,6 +945,18 @@ create or replace view session_dfa_workflow_state AS
 	select DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT from tmp_dfa_workflow_state where CONN_ID = CONNECTION_ID() AND REF_ID=0;
 
 grant select,insert,update,delete on session_dfa_workflow_state to dfa_user;
+
+-- Create following two views as materalized since they are used
+-- to process permissions.
+create or replace view ref_dfa_workflow AS
+	select DISTINCT REF_ID, DFA_WORKFLOW_ID from tmp_dfa_workflow_state where CONN_ID = CONNECTION_ID();
+
+grant select on ref_dfa_workflow to dfa_user;
+
+create or replace view session_dfa_workflow AS
+	select DISTINCT DFA_WORKFLOW_ID from tmp_dfa_workflow_state where CONN_ID = CONNECTION_ID() AND REF_ID=0;
+
+grant select on session_dfa_workflow to dfa_user;
 
 create table tmp_user_role (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -1018,28 +1059,7 @@ CREATE TRIGGER DFA_WORKFLOW_STATE_AFTER_INSERT AFTER INSERT ON DFA_WORKFLOW_STAT
 	IF (@dfa_act_state_ref_id >= 0) THEN
 		insert into ref_dfa_workflow_state (REF_ID, DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
 		VALUES (@dfa_act_state_ref_id, NEW.DFA_WORKFLOW_ID, NEW.DFA_STATE_ID, 1);
-	END IF;
-	
-    /*
-    -- This code will have to be moved to a stored proc.
-	IF EXISTS (SELECT * FROM LKUP_WORKFLOW_STATE_TYP_CREATE WHERE STATE_TYP = NEW.STATE_TYP) THEN 
-	DECLARE dfa_system_constraint_ref_id MEDIUMINT default 0;
-	DECLARE WORKFLOW_TYP INT DEFAULT NULL;
-	DECLARE SUB_STATE BIT;
-
-		select lwstc.WORKFLOW_TYP, lwstc.SUB_STATE into WORKFLOW_TYP, SUB_STATE
-		FROM LKUP_WORKFLOW_STATE_TYP_CREATE lwstc join ref_dfa_constraint create_constraint ON
-			create_constraint.CONSTRAINT_ID = lwstc.CONSTRAINT_ID AND create_constraint.REF_ID = dfa_system_constraint_ref_id
-			JOIN LKUP_WORKFLOW_TYP lwt ON lwt.WORKFLOW_TYP = lwstc.WORKFLOW_TYP
-			JOIN ref_dfa_constraint workflow_typ_constraint ON workflow_typ_constraint.CONSTRAINT_ID = lwt.CONSTRAINT_ID AND workflow_typ_constraint.REF_ID = dfa_system_constraint_ref_id
-		where lwstc.STATE_TYP = NEW.STATE_TYP AND create_constraint.ALLOW_UPDATE=1 AND workflow_typ_constraint.ALLOW_UPDATE=1;	
-	
-		IF (WORKFLOW_TYP IS NOT NULL) THEN		
-			insert DFA_WORKFLOW (SPAWN_DFA_WORKFLOW_ID,SPAWN_DFA_STATE_ID,MOD_BY,WORKFLOW_TYP,SUB_STATE)
-			VALUES (NEW.DFA_WORKFLOW_ID, NEW.DFA_STATE_ID, NEW.MOD_BY, WORKFLOW_TYP, SUB_STATE);
-		END IF;
-	END IF ;
-    */
+	END IF;	
 END GO
 delimiter ;
 
