@@ -182,8 +182,9 @@ This procedure exists to prevent a conniving DFA user from gaining
 root database rights by defining a stored procedure with SQL SECURITY
 of INVOKER and setting the application_data_populate_proc prepared
 statement to invoke that proc.  Instead, such a proc will run as
-the dfadataexecutor@0.0.0.0 account which only has dfa_data role 
-rights.
+the dfadataexecutor@localhost account.  Any stored procedure
+called by the application_data_populate_proc prepared statement
+must GRANT EXECUTE ON PRODECURE <app proc name> to dfadataexecutor@localhost
 
 An application proc with security context of DEFINER will run
 normally, which is the purpose of this exercise: to discourage
@@ -210,7 +211,9 @@ and the user roles.  session_dfa_workflow_state should be
 populated with the DFA_WORKFLOWS to process.
 application_data_populate_proc is a prepared statement
 of a stored procedure call that accepts the workflowId passed
-into this proc.  @dfa_user_application_id is the application
+into this proc.  This proc must have a
+GRANT EXECUTE ON PRODECURE <app proc name> to dfadataexecutor@localhost.
+@dfa_user_application_id is the application
 id of the using application.
 
 Postcondition: session_dfa_constraint will be populated
@@ -253,7 +256,6 @@ BEGIN
 	delete from session_dfa_field_value where FIELD_ID IN (1,2,3,4)
 		AND (dfaWorkflowId IS NULL OR DFA_WORKFLOW_ID = dfaWorkflowId);
 
--- No inserts for dfaWorkflowId (id 1 is reserved for new inserts).
 insert into session_dfa_field_value (DFA_WORKFLOW_ID,FIELD_ID,INT_VALUE,BIT_VALUE,DATE_VALUE,CHAR_VALUE)
 select session_dfa_workflow.DFA_WORKFLOW_ID, LKUP_FIELD.FIELD_ID
 , case when LKUP_FIELD.FIELD_TYP_ID <> 1 THEN null
@@ -400,7 +402,6 @@ grant EXECUTE ON PROCEDURE dfa.sp_cleanupSessionData to dfa_view;
 drop procedure if exists dfa.sp_configureForApplication;
 delimiter GO
 CREATE PROCEDURE dfa.sp_configureForApplication(applicationId INT, systemRoleName VARCHAR(128), dataPopulateCallStatement VARCHAR(128)) 
-	DETERMINISTIC
 BEGIN
 /**********************************************************
 Configure DFA database session for application using DFA
@@ -414,9 +415,9 @@ dfa.sp_processDfaDataAndConstraints passed into it and
 should have syntax like 'CALL myAppsDataUpdateProc(?)'
 
 This proc must have execute permission granted to the
-dfa_data group.  The proc runs in a user context whose
-sole grant is the dfa_data group.  This is to prevent
-an evil user from running commmands as root by supplying
+dfadataexecutor@localhost user.  The proc runs in that
+user's context.  This is to prevent an evil user from 
+running commmands as root by supplying
 a proc that has the SQL SECURITY INVOKER characteristic.
 
 **********************************************************/
@@ -450,6 +451,162 @@ END GO
 delimiter ;
 
 grant EXECUTE ON PROCEDURE dfa.sp_configureForApplication to dfa_view;
+
+drop procedure if exists dfa.sp_findNextValidState;
+delimiter GO
+create procedure dfa.sp_findNextValidState(nextStateTyp INT, refId INT, OUT validStateTyp INT, OUT isPseudo BIT, OUT sendEventToParent INT)
+this_proc: BEGIN
+	declare allowUpdate BIT DEFAULT NULL;
+	SET validStateTyp = NULL;
+	WHILE (validStateTyp IS NULL AND nextStateTyp IS NOT NULL AND (allowUpdate IS NULL OR allowUpdate <> 1)) DO
+		select STATE_TYP, ALT_STATE_TYP, PSEUDO, SEND_EVENT_TO_PARENT, ALLOW_UPDATE
+		INTO validStateTyp, nextStateTyp, isPseudo, sendEventToParent, allowUpdate FROM LKUP_STATE 
+		LEFT JOIN ref_dfa_constraint ON LKUP_STATE.CONSTRAINT_ID = ref_dfa_constraint.CONSTRAINT_ID
+		WHERE STATE_TYP = nextStateTyp;
+	END WHILE;
+	IF (allowUpdate <> 1) THEN
+		SET validStateTyp = NULL;
+	END IF;
+END GO
+delimiter ;
+
+grant EXECUTE ON PROCEDURE dfa.sp_findNextValidState to dfa_user;
+
+drop procedure if exists dfa.sp_processWorkflowEvent;
+delimiter GO
+create procedure dfa.sp_processWorkflowEvent(workflowId BIGINT UNSIGNED
+	, eventTyp INT
+	, commentTx MEDIUMTEXT
+	, modBy VARCHAR(32)
+	, raiseError BIT
+	, refId INT /* 0 for interactive, 1 for system */
+	, dfaStateId MEDIUMINT/* Optional - may be null */) 
+	MODIFIES SQL DATA
+this_proc: BEGIN
+	declare stateTyp INT default NULL;
+	declare isStatePseudo BIT default 0;
+	declare sendEventToParent INT;
+	declare nextStateTyp INT default NULL;
+	declare workflowTyp INT default NULL;
+	declare errorMsgTx VARCHAR(256) default NULL;
+	declare currentDfaStateId MEDIUMINT;
+	declare parentWorkflowId BIGINT UNSIGNED;
+	declare parentStateId MEDIUMINT UNSIGNED;
+	declare parentStateTyp INT default NULL;
+	-- 0 means use value computed in trigger.
+	declare undoStateId MEDIUMINT UNSIGNED default 0;
+	declare thisUndoStateId MEDIUMINT UNSIGNED;
+	declare isCurrent BIT;
+	declare isSubstate BIT;
+	
+	CALL dfa.sp_processDfaDataAndConstraints(workflowId);
+
+	-- Both load and validate permissions for workflowTyp, stateTyp, and nextStateTyp.
+	select dw.WORKFLOW_TYP, SPAWN_DFA_WORKFLOW_ID, SPAWN_DFA_STATE_ID, SUB_STATE
+	into workflowTyp, parentWorkflowId, parentStateId, isSubstate from DFA_WORKFLOW dfaw 
+		JOIN LKUP_WORKFLOW_TYP dw ON dw.WORKFLOW_TYP = dfaw.WORKFLOW_TYP
+		JOIN ref_dfa_constraint rdc ON dw.CONSTTAINT_ID = rdc.CONSTRAINT_ID and rdc.REF_ID = refId
+		where dfaw.DFA_WORKFLOW_ID = workflowId;
+		
+	if workflowTyp IS NULL THEN
+		IF (raiseError = 1) THEN
+			select 'Insufficent permission or workflow not found ' + dw.WORKFLOW_NM into errorMsgTx
+		from DFA_WORKFLOW dfaw 
+		JOIN LKUP_WORKFLOW_TYP dw ON dw.WORKFLOW_TYP = dfaw.WORKFLOW_TYP
+		JOIN ref_dfa_constraint rdc ON dw.CONSTTAINT_ID = rdc.CONSTRAINT_ID and rdc.REF_ID = refId
+		where dfaw.DFA_WORKFLOW_ID = workflowId;			
+		SIGNAL SQLSTATE '45000' SET message_text=errorMsgTx;
+		END IF;
+		LEAVE this_proc;
+	END IF;
+
+	select STATE_TYP, UNDO_STATE_ID, DFA_STATE_ID into stateTyp, thisUndoStateId, currentDfaStateId from DFA_WORKFLOW_STATE 
+		where DFA_WORKFLOW_ID = workflowId AND IS_CURRENT = 1;
+
+	-- Optimistic locking: If the state of this workflow does not match the state
+	-- provided by the client, it means another use or the system applied an event
+	-- to this workflow.  Raise an error if this happens.	
+	if (dfaStateId IS NOT NULL AND dfaStateId <> currentDfaStateId) THEN
+		IF (raiseError = 1) THEN
+			SIGNAL SQLSTATE '45000' SET message_text='Concurrent modification error: Another user or system has modified this record.';			
+		END IF;		
+		LEAVE this_proc;
+	END IF;
+		
+	select NEXT_STATE_TYP into nextStateTyp from LKUP_EVENT_STATE_TRANS lest
+		JOIN ref_dfa_constraint rdc1 ON lest.CONSTRAINT_ID = rdc1.CONSTRAINT_ID and rdc.REF_ID = refId
+		JOIN LKUP_STATE ls ON LKUP_EVENT_STATE_TRANS.NEXT_STATE_TYP = ls.STATE_TYP
+		LEFT JOIN ref_dfa_constraint rdc2 ON ls.ALT_STATE_TYP IS NULL AND ls.CONSTRAINT_ID = rdc2.CONSTRAINT_ID	
+		where EVENT_TYP = eventTyp and STATE_TYP = stateTyp and rdc1.ALLOW_UPDATE = 1
+			AND (ls.ALT_STATE_TYP IS NOT NULL OR rdc2.ALLOW_UPDATE = 1);
+
+	CALL dfa.sp_findNextValidState(nextStateTyp, refId, nextStateTyp, isStatePseudo, sendEventToParent);
+
+	IF nextStateTyp IS NULL THEN
+		IF (raiseError = 1) THEN
+			select 'Insufficent permission to tansition with event ' + LKUP_EVENT.EVENT_NM into errorMsgTx
+			from LKUP_EVENT where LKUP_EVENT.EVENT_TYP = eventTyp;
+			SIGNAL SQLSTATE '45000' SET message_text=errorMsgTx;
+		END IF;
+		LEAVE this_proc;
+	END IF;
+
+	select MAKE_CURRENT into isCurrent from LKUP_EVENT where EVENT_TYP = eventTyp;
+
+	IF (isCurrent AND isStatePseudo) THEN	
+		IF (nextStateTyp = 5000) THEN
+			select STATE_TYP, UNDO_STATE_ID into nextStateTyp, undoStateId from DFA_WORKFLOW_STATE 
+			where DFA_WORKFLOW_ID = workflowId AND UNDO_STATE_ID = thisUndoStateId;			
+		ELSE
+			SIGNAL SQLSTATE '45000' SET message_text='Unknown pseudo state.';			
+		END IF;
+	
+	END IF;
+	
+-- insert the newly minted state.  This must be done before any other state processing
+-- because the role / role data will change as the system recursively resolved
+-- other state / substates.
+	INSERT INTO dfa_workflow_state
+	(DFA_WORKFLOW_ID, IS_CURRENT, STATE_TYP, EVENT_TYP, UNDO_STATE_ID, COMMENT_TX, MOD_BY)
+	VALUES (workflowId, isCurrent, nextStateTyp, eventTyp, undoStateId, commentTx, modBy);
+
+
+	IF parentWorkflowId IS NOT NULL THEN
+		-- Send the event to the parent, regardless of if we are a substate or not.
+		IF (sendEventToParent IS NOT NULL) THEN
+				call dfa.sp_processWorkflowEvent(parentWorkflowId, sendEventToParent, commentTx, 'SYSTEM', 0, refId, IF(isSubstate, parentStateId, NULL));
+		END IF;
+		IF isSubstate THEN
+			select STATE_TYP into parentStateTyp from DFA_WORKFLOW_STATE where 
+			DFA_WORKFLOW_ID = parentWorkflowId AND DFA_STATE_ID = parentStateId AND IS_CURRENT = 1;
+
+			if (parentStateTyp IS NOT NULL) THEN
+				-- See if there are any active states.  If not, send the event defined by LKUP_WORKFLOW_STATE_TYP_CREATE.EVENT_WHEN_SUB_COMPLETED.
+				SET sendEventToParent = NULL;
+				select EVENT_WHEN_SUB_COMPLETED into sendEventToParent from LKUP_WORKFLOW_STATE_TYP_CREATE 
+					where STATE_TYP = parentStateTyp AND WORKFLOW_TYP = workflowTyp;
+				IF (sendEventToParent IS NOT NULL AND NOT EXISTS (
+					select * from DFA_WORKFLOW JOIN DFA_WORKFLOW_STATE ON 
+					DFA_WORKFLOW.DFA_WORKFLOW_ID = DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID 
+					and DFA_WORKFLOW_STATE.IS_CURRENT = 1
+					JOIN LKUP_STATE ON LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
+					where DFA_WORKFLOW.SPAWN_DFA_WORKFLOW_ID = parentWorkflowId 
+					and DFA_WORKFLOW.SPAWN_DFA_STATE_ID = parentStateId 
+					AND LKUP_STATE.SUB_SATISFIED = 0
+				)) THEN
+					-- Determine if this and all other siblings are inactive.  If so, send the event.
+					call dfa.sp_processWorkflowEvent(parentWorkflowId, sendEventToParent, commentTx, 'SYSTEM', 0, refId, parentStateId);	
+			END IF;
+			END IF;
+		END IF;
+	END IF;
+	CALL processSubActions(workflowId, currentDfaStateId);
+
+END GO
+delimiter ;
+
+grant EXECUTE ON PROCEDURE dfa.sp_processWorkflowEvent to dfa_user;
+
 
 flush PRIVILEGES;
 
@@ -509,3 +666,4 @@ UNION select case when @dfa_workflow_insert_should_be_null_2 IS NULL THEN 'PASS'
 -- This should FAIL with an ERROR.
 CALL dfa.sp_startWorkflow(1,@dfa_workflow_proc_unit_test_comment, 'test', 1, @dfa_workflow_insert_ut_id);
 */
+
