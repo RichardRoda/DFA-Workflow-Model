@@ -34,6 +34,16 @@ IF NOT EXISTS (select 1 from mysql.user where user = 'dfa_user') THEN
     
     create user dfadataexecutor@localhost IDENTIFIED BY PASSWORD '7d9143066efc8b954bc44aff1ef26722e1fd49792';
     grant dfa_data to dfadataexecutor@localhost;
+    
+    create user dfauser@localhost IDENTIFIED BY 'dfauser';
+    create user dfaadmin@localhost IDENTIFIED BY 'dfaadmin';
+    
+    grant dfa_user to dfauser@localhost;
+    grant dfa_admin to dfaadmin@localhost;
+    grant dfa_user to dfaadmin@localhost;
+    
+    flush privileges;
+    
 END IF;
 END GO
 delimiter ;
@@ -293,7 +303,7 @@ delimiter GO
 CREATE TRIGGER LKUP_CONSTRAINT_APP_FIELD_AFTER_INSERT AFTER INSERT ON LKUP_CONSTRAINT_APP_FIELD 
 FOR EACH ROW 
 BEGIN
-	update LKUP_CONSTRAINT_APP SET ROLE_COUNT = FIELD_COUNT + 1 WHERE LKUP_CONSTRAINT_APP.APPLICATION_ID = NEW.APPLICATION_ID
+	update LKUP_CONSTRAINT_APP SET FIELD_COUNT = FIELD_COUNT + 1 WHERE LKUP_CONSTRAINT_APP.APPLICATION_ID = NEW.APPLICATION_ID
 		AND LKUP_CONSTRAINT_APP.CONSTRAINT_ID = NEW.CONSTRAINT_ID;
 END GO
 delimiter ;
@@ -570,13 +580,11 @@ create table LKUP_STATE (
 	ATTENTION BIT (1) NOT NULL DEFAULT 0,
 	EXPECTED_NEXT_EVENT INT NULL,
 	ALT_STATE_TYP INT NULL,
-	SEND_EVENT_TO_PARENT INT NULL,
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	CONSTRAINT_ID  INT NOT NULL DEFAULT 1,
 	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
 	CONSTRAINT FOREIGN KEY (ALT_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
-	CONSTRAINT FOREIGN KEY (SEND_EVENT_TO_PARENT) REFERENCES LKUP_EVENT (EVENT_TYP),
 	CONSTRAINT CHECK (ACTIVE=0 OR PSEUDO=0),
 	CONSTRAINT CHECK (ACTIVE=1 OR SUB_SATISFIED=1), -- SUB_SATISFIED = 1 when ACTIVE = 0
 	PRIMARY KEY (STATE_TYP),
@@ -598,6 +606,7 @@ create table LKUP_EVENT_STATE_TRANS (
 	NEXT_STATE_TYP INT NOT NULL,
 	SORT_ORDER INT NULL, -- Overrides LKUP_EVENT.SORT_ORDER if not null.
 	EVENT_TX VARCHAR (60) NULL, -- Overrides LKUP_EVENT.EVENT_TX if not null.
+	PARENT_EVENT_TYP INT NULL,
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,	
 	CONSTRAINT_ID  INT NOT NULL DEFAULT 1,
@@ -605,11 +614,12 @@ create table LKUP_EVENT_STATE_TRANS (
 	PRIMARY KEY (STATE_TYP,EVENT_TYP),
 	CONSTRAINT FOREIGN KEY (STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
 	CONSTRAINT FOREIGN KEY (EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP),
+	CONSTRAINT FOREIGN KEY (PARENT_EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP),
 	CONSTRAINT FOREIGN KEY (NEXT_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
-COMMENT='The transitions (verticies) between states via events.  A transition is valid if its constraint is satisfied with update rights, AND its next state is satisfied with update right or there exists an alternate of the next state that is satisfied with update rights.  SORT_ORDER and EVENT_TX exist to allow those event fields to be overridden on a per-transition basis.  Allowing them to be overidden prevents the necessity of polluting the LKUP_EVENT table with similiar events.';
+COMMENT='The transitions (verticies) between states via events.  A transition is valid if its constraint is satisfied with update rights, AND its next state is satisfied with update right or there exists an alternate of the next state that is satisfied with update rights.  SORT_ORDER and EVENT_TX exist to allow those event fields to be overridden on a per-transition basis.  Allowing them to be overidden prevents the necessity of polluting the LKUP_EVENT table with similiar events.  PARENT_EVENT_TYP is sent to the parent workflow when the workflow is a sub-workflow.';
 
 grant select on LKUP_EVENT_STATE_TRANS to dfa_viewer;
 grant insert,update,delete on LKUP_EVENT_STATE_TRANS to dfa_admin;
@@ -748,7 +758,7 @@ COLLATE='utf8_general_ci'
 ENGINE=InnoDB
 COMMENT='An instance of a given workflow.  This is the table that is typically bound to an entity via a binding table.';
 
-grant select on DFA_WORKFLOW to dfa_view;
+grant select on DFA_WORKFLOW to dfa_viewer;
 grant update (COMMENT_TX,MOD_BY) on DFA_WORKFLOW to dfa_user;
 grant insert,update,delete on DFA_WORKFLOW to dfa_admin;
 
@@ -781,7 +791,7 @@ COLLATE='utf8_general_ci'
 ENGINE=InnoDB
 COMMENT='An instance of a workflow state.  There is always exactly 1 current state with IS_CURRENT = 1.  IS_PASSIVE is true when a state is created by an event with LKUP_EVENT.MAKE_CURRENT of false.  PARENT_STATE_ID = DFA_STATE_ID for a non-passive state.  For passive states, PARENT_STATE_ID is the state that was current when that state was inserted.  UNDO_STATE_ID is the state that will be transitioned to if an Undo pseudo state is applied.  It is NULL (indicating that undo is invalid) if state is at the start state for the given DFA type.';
 
-grant select on DFA_WORKFLOW_STATE to dfa_view;
+grant select on DFA_WORKFLOW_STATE to dfa_viewer;
 grant update (EVENT_TYP,COMMENT_TX,MOD_BY) on DFA_WORKFLOW_STATE to dfa_user;
 grant insert,update,delete on DFA_WORKFLOW_STATE to dfa_admin;
 
@@ -993,7 +1003,7 @@ grant select,insert,update,delete on ref_user_role to dfa_user;
 create or replace view session_user_role as 
 	SELECT ROLE_NM FROM tmp_user_role where CONN_ID = CONNECTION_ID() AND REF_ID = 0;
 	
-grant select,insert,update,delete on session_user_role to dfa_view;
+grant select,insert,update,delete on session_user_role to dfa_viewer;
 
 create table tmp_dfa_field_value (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -1028,7 +1038,7 @@ delimiter ;
 create or replace view session_dfa_field_value as
 	select DFA_WORKFLOW_ID, FIELD_ID, DISPLAY_VALUE, INT_VALUE, BIT_VALUE, DATE_VALUE, CHAR_VALUE from tmp_dfa_field_value where CONN_ID = CONNECTION_ID();
 
-grant select,insert,update,delete on session_dfa_field_value to dfa_view;
+grant select,insert,update,delete on session_dfa_field_value to dfa_viewer;
 
 create table tmp_dfa_constraint (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,

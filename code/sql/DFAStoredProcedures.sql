@@ -18,12 +18,12 @@ when an state is passive or no transition occurred because of constraints.
 	declare stateTyp INT;
 	declare spawnDfaStateId MEDIUMINT UNSIGNED;
 	declare state_typ_create cursor for select LKUP_WORKFLOW_STATE_TYP_CREATE.WORKFLOW_TYP, LKUP_WORKFLOW_STATE_TYP_CREATE.SUB_STATE 
-		from LKUP_WORKFLOW_STATE_TYP_CREATE JOIN ref_dfa_constraint ON REF_ID = 1 AND ref_dfa_constraint.CONSTRAINT_ID = LKUP_WORKFLOW_STATE_TYP_CREATE.CONSTRAINT_ID
+		from LKUP_WORKFLOW_STATE_TYP_CREATE JOIN ref_dfa_constraint ON ref_dfa_constraint.DFA_WORKFLOW_ID = spawnDfaWorkflowId AND REF_ID = 1 AND ref_dfa_constraint.CONSTRAINT_ID = LKUP_WORKFLOW_STATE_TYP_CREATE.CONSTRAINT_ID
         where ref_dfa_constraint.ALLOW_UPDATE = 1 AND LKUP_WORKFLOW_STATE_TYP_CREATE.STATE_TYP = stateTyp ORDER BY LKUP_WORKFLOW_STATE_TYP_CREATE.WORKFLOW_TYP;
 	DECLARE CONTINUE HANDLER FOR NOT FOUND SET cursor_done = TRUE;
 
 	IF EXISTS (select 1 from LKUP_WORKFLOW_STATE_TYP_CREATE JOIN DFA_WORKFLOW_STATE ON LKUP_WORKFLOW_STATE_TYP_CREATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
-		JOIN ref_dfa_constraint ON REF_ID = 1 AND ref_dfa_constraint.CONSTRAINT_ID = LKUP_WORKFLOW_STATE_TYP_CREATE.CONSTRAINT_ID
+		JOIN ref_dfa_constraint ON ref_dfa_constraint.DFA_WORKFLOW_ID = spawnDfaWorkflowId AND REF_ID = 1 AND ref_dfa_constraint.CONSTRAINT_ID = LKUP_WORKFLOW_STATE_TYP_CREATE.CONSTRAINT_ID
 		WHERE ref_dfa_constraint.ALLOW_UPDATE = 1 AND DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = spawnDfaWorkflowId AND DFA_WORKFLOW_STATE.DFA_STATE_ID <> originalDfaStateId AND IS_CURRENT = 1) THEN
 
       select concat('Started because ', LKUP_EVENT.EVENT_NM, ' on workflow ', LKUP_WORKFLOW_TYP.WORKFLOW_NM, ' entered state ', LKUP_STATE.STATE_NM), DFA_WORKFLOW_STATE.DFA_STATE_ID, DFA_WORKFLOW_STATE.STATE_TYP into SUB_WORKFLOW, spawnDfaStateId, stateTyp
@@ -58,19 +58,26 @@ Internal procedure to start a workflow from either the user or a spawned workflo
 with dfa.processSubActions, meaning that a workflow may recursively spawn an arbritrary tree of workflows.
 */
 	DECLARE ERROR_TX VARCHAR(128);
+    DECLARE updateAllowed BIT DEFAULT FALSE;
     
 /* Change the reserved */
 
     CALL dfa.sp_processNewDfaDataAndConstraints(workflowTyp);
-
-	IF EXISTS (select * from ref_dfa_constraint join LKUP_WORKFLOW_TYP ON 
+	SET updateAllowed = EXISTS (select * from ref_dfa_constraint join LKUP_WORKFLOW_TYP ON 
 		LKUP_WORKFLOW_TYP.CONSTRAINT_ID = ref_dfa_constraint.CONSTRAINT_ID
-        where REF_ID = refConstraintId and ALLOW_UPDATE=1) THEN
+        where DFA_WORKFLOW_ID = 1 AND REF_ID = refConstraintId and ALLOW_UPDATE=1);
+        
+	-- Cleanup references to reserved workflow #1.
+    delete from ref_dfa_constraint where DFA_WORKFLOW_ID=1 AND REF_ID IN (0,1);
+    delete from ref_dfa_workflow_state where DFA_WORKFLOW_ID=1 AND REF_ID IN (0,1);
+    delete from session_dfa_field_value where DFA_WORKFLOW_ID=1;
 
+	IF updateAllowed THEN
 		INSERT INTO DFA_WORKFLOW (WORKFLOW_TYP,COMMENT_TX,MOD_BY,SPAWN_DFA_WORKFLOW_ID,SPAWN_DFA_STATE_ID,SUB_STATE)
 			VALUES (workflowTyp, commentTx, modBy,spawnDfaWorkflowId,spawnDfaStateId,subState);	
 
 		SET dfaWorkflowId =  LAST_INSERT_ID();
+		CALL dfa.sp_processDfaDataAndConstraints(dfaWorkflowId);
         update DFA_WORKFLOW_STATE SET COMMENT_TX = 'Workflow started' where DFA_WORKFLOW_ID = dfaWorkflowId AND IS_CURRENT = 1;
 		CALL dfa.processSubActions(dfaWorkflowId, 0);
     ELSE
@@ -97,7 +104,6 @@ newly created workflows (along with their states) will be inserted into the per-
 with ref_data_constraint.REF_ID = @dfa_act_state_ref_id.
 */
 	CALL dfa.sp_do_startWorkflow(workflowTyp, commentTx, modBy, raiseError, 0, NULL, NULL, FALSE, dfaWorkflowId);
-	CALL dfa.sp_processDfaDataAndConstraints(dfaWorkflowId);
 END GO
 delimiter ;
 
@@ -110,9 +116,9 @@ CREATE PROCEDURE dfa.sp_processValidRefConstraints(applicationId INT, workflowId
 BEGIN
 insert into ref_dfa_constraint (REF_ID,DFA_WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
 SELECT refId as REF_ID, session_dfa_workflow.DFA_WORKFLOW_ID, LKUP_CONSTRAINT_APP.CONSTRAINT_ID, 
-    0 as ALLOW_UPDATE, 0 as IS_RESPONSIBLE
+    CASE WHEN LKUP_CONSTRAINT_APP.ROLE_COUNT = 0 THEN 1 ELSE 0 END as ALLOW_UPDATE, 0 as IS_RESPONSIBLE
 	from LKUP_CONSTRAINT_APP JOIN session_dfa_workflow ON (workflowId IS NULL OR session_dfa_workflow.DFA_WORKFLOW_ID = workflowId)
-	where LKUP_CONSTRAINT_APP.APPLICATION_ID = applicationId
+	where LKUP_CONSTRAINT_APP.APPLICATION_ID = applicationId AND LKUP_CONSTRAINT_APP.CONSTRAINT_ID <> 2
 		AND (LKUP_CONSTRAINT_APP.ROLE_COUNT = 0 OR EXISTS (
 			select * FROM LKUP_CONSTRAINT_APP_ROLE JOIN session_user_role ON session_user_role.ROLE_NM = LKUP_CONSTRAINT_APP_ROLE.ROLE_NM
 				WHERE IS_SHOW=1 AND LKUP_CONSTRAINT_APP_ROLE.APPLICATION_ID = LKUP_CONSTRAINT_APP.APPLICATION_ID AND LKUP_CONSTRAINT_APP_ROLE.CONSTRAINT_ID = LKUP_CONSTRAINT_APP.CONSTRAINT_ID
@@ -124,21 +130,27 @@ SELECT refId as REF_ID, session_dfa_workflow.DFA_WORKFLOW_ID, LKUP_CONSTRAINT_AP
 			(select count(DISTINCT LKUP_CONSTRAINT_APP_FIELD.FIELD_ID) 
 				from LKUP_CONSTRAINT_APP_FIELD JOIN LKUP_FIELD ON LKUP_CONSTRAINT_APP_FIELD.FIELD_ID = LKUP_FIELD.FIELD_ID
 				JOIN session_dfa_field_value ON session_dfa_field_value.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID
-                LEFT JOIN LKUP_CONSTRAINT_FIELD_INT_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 1 AND session_dfa_field_value.INT_VALUE IS NOT NULL 
+                LEFT JOIN LKUP_CONSTRAINT_FIELD_INT_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 1 
+					AND session_dfa_field_value.INT_VALUE IS NOT NULL 
 					AND LKUP_CONSTRAINT_FIELD_INT_RANGE.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.APPLICATION_ID = LKUP_CONSTRAINT_FIELD_INT_RANGE.APPLICATION_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.CONSTRAINT_ID = LKUP_CONSTRAINT_FIELD_INT_RANGE.CONSTRAINT_ID AND
-					session_dfa_field_value.INT_VALUE BETWEEN LKUP_CONSTRAINT_FIELD_INT_RANGE.SMALLEST_VALUE AND LKUP_CONSTRAINT_FIELD_INT_RANGE.LARGEST_VALUE
-                LEFT JOIN LKUP_CONSTRAINT_FIELD_DATE_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 3 AND session_dfa_field_value.DATE_VALUE IS NOT NULL 
+					session_dfa_field_value.INT_VALUE BETWEEN LKUP_CONSTRAINT_FIELD_INT_RANGE.SMALLEST_VALUE 
+                    AND LKUP_CONSTRAINT_FIELD_INT_RANGE.LARGEST_VALUE
+                LEFT JOIN LKUP_CONSTRAINT_FIELD_DATE_RANGE ON LKUP_FIELD.FIELD_TYP_ID = 3 
+					AND session_dfa_field_value.DATE_VALUE IS NOT NULL 
 					AND LKUP_CONSTRAINT_FIELD_DATE_RANGE.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.APPLICATION_ID = LKUP_CONSTRAINT_FIELD_DATE_RANGE.APPLICATION_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.CONSTRAINT_ID = LKUP_CONSTRAINT_FIELD_DATE_RANGE.CONSTRAINT_ID AND
-					session_dfa_field_value.DATE_VALUE BETWEEN LKUP_CONSTRAINT_FIELD_DATE_RANGE.SMALLEST_VALUE AND LKUP_CONSTRAINT_FIELD_DATE_RANGE.LARGEST_VALUE
-                LEFT JOIN LKUP_CONSTRAINT_FIELD_BIT ON LKUP_FIELD.FIELD_TYP_ID = 2 AND session_dfa_field_value.BIT_VALUE IS NOT NULL
+					session_dfa_field_value.DATE_VALUE BETWEEN LKUP_CONSTRAINT_FIELD_DATE_RANGE.SMALLEST_VALUE 
+                    AND LKUP_CONSTRAINT_FIELD_DATE_RANGE.LARGEST_VALUE
+                LEFT JOIN LKUP_CONSTRAINT_FIELD_BIT ON LKUP_FIELD.FIELD_TYP_ID = 2 
+					AND session_dfa_field_value.BIT_VALUE IS NOT NULL
 					AND LKUP_CONSTRAINT_FIELD_BIT.FIELD_ID = LKUP_CONSTRAINT_APP_FIELD.FIELD_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.APPLICATION_ID = LKUP_CONSTRAINT_FIELD_BIT.APPLICATION_ID 
                     AND LKUP_CONSTRAINT_APP_FIELD.CONSTRAINT_ID = LKUP_CONSTRAINT_FIELD_BIT.CONSTRAINT_ID AND
-					(LKUP_CONSTRAINT_FIELD_BIT.VALID_VALUE IS NULL OR LKUP_CONSTRAINT_FIELD_BIT.VALID_VALUE = session_dfa_field_value.BIT_VALUE)
+					(LKUP_CONSTRAINT_FIELD_BIT.VALID_VALUE IS NULL OR 
+						LKUP_CONSTRAINT_FIELD_BIT.VALID_VALUE = session_dfa_field_value.BIT_VALUE)
 				WHERE ((LKUP_CONSTRAINT_APP_FIELD.NULL_VALID = 1 
 					AND session_dfa_field_value.INT_VALUE IS NULL
                     AND session_dfa_field_value.DATE_VALUE IS NULL
@@ -157,6 +169,7 @@ SELECT refId as REF_ID, session_dfa_workflow.DFA_WORKFLOW_ID, LKUP_CONSTRAINT_AP
 		SET ref_dfa_constraint.ALLOW_UPDATE = 1
         WHERE LKUP_CONSTRAINT_APP_ROLE.ALLOW_UPDATE = 1
 			and ref_dfa_constraint.REF_ID = refId
+            and ref_dfa_constraint.DFA_WORKFLOW_ID = workflowId
             and ref_dfa_constraint.CONSTRAINT_ID = LKUP_CONSTRAINT_APP_ROLE.CONSTRAINT_ID
             and LKUP_CONSTRAINT_APP_ROLE.APPLICATION_ID = applicationId
             and LKUP_CONSTRAINT_APP_ROLE.ROLE_NM = session_user_role.ROLE_NM;
@@ -165,6 +178,7 @@ SELECT refId as REF_ID, session_dfa_workflow.DFA_WORKFLOW_ID, LKUP_CONSTRAINT_AP
 		SET ref_dfa_constraint.IS_RESPONSIBLE = 1
         WHERE ref_dfa_constraint.ALLOW_UPDATE = 1 AND LKUP_CONSTRAINT_APP_ROLE.IS_RESPONSIBLE = 1
 			and ref_dfa_constraint.REF_ID = refId
+            and ref_dfa_constraint.DFA_WORKFLOW_ID = workflowId
             and ref_dfa_constraint.CONSTRAINT_ID = LKUP_CONSTRAINT_APP_ROLE.CONSTRAINT_ID
             and LKUP_CONSTRAINT_APP_ROLE.APPLICATION_ID = applicationId
             and LKUP_CONSTRAINT_APP_ROLE.ROLE_NM = session_user_role.ROLE_NM;
@@ -201,7 +215,7 @@ grant EXECUTE ON PROCEDURE dfa.sp_execUntrustedApplicationDataProc to dfadataexe
 
 DROP PROCEDURE IF EXISTS dfa.sp_processValidConstraints;
 delimiter GO
-CREATE PROCEDURE dfa.sp_processValidConstraints(applicationId INT, workflowId BIGINT UNSIGNED) 
+CREATE PROCEDURE dfa.sp_processValidConstraints(applicationId INT, dfaWorkflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA
 BEGIN
 /********************************************
@@ -223,30 +237,37 @@ constraints (the session constraints + 'SYSTEM' role
 added).
 *********************************************/
 
-delete from ref_dfa_constraint where REF_ID IN (0,1) AND (workflowId IS NULL or ref_dfa_constraint.DFA_WORKFLOW_ID = workflowId)
-	and ref_dfa_constraint.CONSTRAINT_ID IN (select CONSTRAINT_ID from LKUP_CONSTRAINT_APP where APPLICATION_ID IN (1, @dfa_user_application_id));
+delete from ref_dfa_constraint where REF_ID IN (0,1) AND (dfaWorkflowId IS NULL or ref_dfa_constraint.DFA_WORKFLOW_ID = dfaWorkflowId)
+	and ref_dfa_constraint.CONSTRAINT_ID IN (select CONSTRAINT_ID from LKUP_CONSTRAINT_APP where APPLICATION_ID = applicationId);
 
-CALL dfa.sp_processValidRefConstraints(applicationId, workflowId, 0);
+CALL dfa.sp_processValidRefConstraints(applicationId, dfaWorkflowId, 0);
 IF exists (select * from session_user_role where session_user_role.role_nm = @dfa_system_role_nm) THEN
 -- Magically add the DFA system constraint here.
-	INSERT INTO session_dfa_constraint (WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
-    select WORKFLOW_ID,2 as CONSTRAINT_ID,1 AS ALLOW_UPDATE, 0 as IS_RESPONSIBLE
-	from session_dfa_workflow where dfaWorkflowId IS NULL OR session_dfa_workflow.DFA_WORKFLOW_ID = dfaWorkflowId;
+	INSERT INTO session_dfa_constraint (DFA_WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
+    select DFA_WORKFLOW_ID,2 as CONSTRAINT_ID,1 AS ALLOW_UPDATE, 0 as IS_RESPONSIBLE
+	from session_dfa_workflow LEFT JOIN session_dfa_constraint ON session_dfa_constraint.DFA_WORKFLOW_ID=session_dfa_workflow.DFA_WORKFLOW_ID and session_dfa_constraint.CONSTRAINT_ID=2
+	where session_dfa_constraint.CONSTRAINT_ID IS NULL AND (dfaWorkflowId IS NULL OR session_dfa_workflow.DFA_WORKFLOW_ID = dfaWorkflowId);
 
 -- System already present, copy the primary constraints to the system constraints.
-	INSERT INTO ref_dfa_constraint (REF_ID,WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
-    select 1,WORKFLOW_ID, CONSTRAINT_ID, ALLOW_UPDATE,IS_RESPONSIBLE from session_dfa_constraint;
+	INSERT INTO ref_dfa_constraint (REF_ID,DFA_WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
+    select 1,DFA_WORKFLOW_ID, CONSTRAINT_ID, ALLOW_UPDATE,IS_RESPONSIBLE from session_dfa_constraint;
 ELSE
 -- Temporarly add system to session role table, compute roles for refid 1, and then remove system role.
 	insert into session_user_role (ROLE_NM) VALUES (@dfa_system_role_nm);
-    CALL dfa.sp_processValidRefConstraints(applicationId, workflowId, 1);
+    CALL dfa.sp_processValidRefConstraints(applicationId, dfaWorkflowId, 1);
     delete from session_user_role where ROLE_NM=@dfa_system_role_nm;
+-- Magically add the DFA system constraint here.
+INSERT INTO ref_dfa_constraint (REF_ID,DFA_WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE,IS_RESPONSIBLE)
+	select 1,session_dfa_workflow.DFA_WORKFLOW_ID,2 as CONSTRAINT_ID,1 AS ALLOW_UPDATE, 0 as IS_RESPONSIBLE
+	from session_dfa_workflow LEFT JOIN ref_dfa_constraint ON ref_dfa_constraint.REF_ID=1 AND ref_dfa_constraint.DFA_WORKFLOW_ID=session_dfa_workflow.DFA_WORKFLOW_ID and ref_dfa_constraint.CONSTRAINT_ID=2
+	where ref_dfa_constraint.CONSTRAINT_ID IS NULL AND (dfaWorkflowId IS NULL OR session_dfa_workflow.DFA_WORKFLOW_ID = dfaWorkflowId);
+
 END IF;
 
 END GO
 delimiter ;
 
-grant EXECUTE ON PROCEDURE dfa.sp_processValidConstraints to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_processValidConstraints to dfa_viewer;
 
 drop procedure if exists dfa.sp_processDfaDataForExisting;
 delimiter GO
@@ -325,7 +346,7 @@ END IF;
 END GO
 delimiter ;
 
-grant EXECUTE ON PROCEDURE dfa.sp_processDfaDataAndConstraints to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_processDfaDataAndConstraints to dfa_viewer;
 
 drop procedure if exists dfa.sp_processNewDfaDataAndConstraints;
 delimiter GO
@@ -366,7 +387,7 @@ END IF;
 END GO
 delimiter ;
 
-grant EXECUTE ON PROCEDURE dfa.sp_processNewDfaDataAndConstraints to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_processNewDfaDataAndConstraints to dfa_viewer;
 
 drop procedure if exists dfa.sp_processNullApplicationData;
 delimiter GO
@@ -391,13 +412,26 @@ BEGIN
 
 delete from ref_dfa_constraint where 1=1;
 delete from ref_dfa_workflow_state where 1=1;
-delete from ref_user_role where 1=1;
 delete from session_dfa_field_value where 1=1;
 
 END GO
 delimiter ;
 
-grant EXECUTE ON PROCEDURE dfa.sp_cleanupSessionData to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_cleanupSessionData to dfa_viewer;
+
+drop procedure if exists dfa.sp_cleanupSessionDataAndRoles;
+delimiter GO
+CREATE PROCEDURE dfa.sp_cleanupSessionDataAndRoles() 
+	MODIFIES SQL DATA
+BEGIN
+
+call dfa.sp_cleanupSessionData();
+delete from ref_user_role where 1=1;
+
+END GO
+delimiter ;
+
+grant EXECUTE ON PROCEDURE dfa.sp_cleanupSessionDataAndRoles to dfa_viewer;
 
 drop procedure if exists dfa.sp_configureForApplication;
 delimiter GO
@@ -450,18 +484,18 @@ END IF;
 END GO
 delimiter ;
 
-grant EXECUTE ON PROCEDURE dfa.sp_configureForApplication to dfa_view;
+grant EXECUTE ON PROCEDURE dfa.sp_configureForApplication to dfa_viewer;
 
 drop procedure if exists dfa.sp_findNextValidState;
 delimiter GO
-create procedure dfa.sp_findNextValidState(nextStateTyp INT, refId INT, OUT validStateTyp INT, OUT isPseudo BIT, OUT sendEventToParent INT)
+create procedure dfa.sp_findNextValidState(dfaWorkflowId BIGINT UNSIGNED, nextStateTyp INT, refId INT, OUT validStateTyp INT, OUT isPseudo BIT)
 this_proc: BEGIN
 	declare allowUpdate BIT DEFAULT NULL;
 	SET validStateTyp = NULL;
 	WHILE (validStateTyp IS NULL AND nextStateTyp IS NOT NULL AND (allowUpdate IS NULL OR allowUpdate <> 1)) DO
-		select STATE_TYP, ALT_STATE_TYP, PSEUDO, SEND_EVENT_TO_PARENT, ALLOW_UPDATE
-		INTO validStateTyp, nextStateTyp, isPseudo, sendEventToParent, allowUpdate FROM LKUP_STATE 
-		LEFT JOIN ref_dfa_constraint ON LKUP_STATE.CONSTRAINT_ID = ref_dfa_constraint.CONSTRAINT_ID
+		select STATE_TYP, ALT_STATE_TYP, PSEUDO, ALLOW_UPDATE
+		INTO validStateTyp, nextStateTyp, isPseudo, allowUpdate FROM LKUP_STATE 
+		LEFT JOIN ref_dfa_constraint ON DFA_WORKFLOW_ID = dfaWorkflowId AND LKUP_STATE.CONSTRAINT_ID = ref_dfa_constraint.CONSTRAINT_ID AND REF_ID = refId
 		WHERE STATE_TYP = nextStateTyp;
 	END WHILE;
 	IF (allowUpdate <> 1) THEN
@@ -472,9 +506,9 @@ delimiter ;
 
 grant EXECUTE ON PROCEDURE dfa.sp_findNextValidState to dfa_user;
 
-drop procedure if exists dfa.sp_processWorkflowEvent;
+drop procedure if exists dfa.sp_do_processWorkflowEvent;
 delimiter GO
-create procedure dfa.sp_processWorkflowEvent(workflowId BIGINT UNSIGNED
+create procedure dfa.sp_do_processWorkflowEvent(workflowId BIGINT UNSIGNED
 	, eventTyp INT
 	, commentTx MEDIUMTEXT
 	, modBy VARCHAR(32)
@@ -485,7 +519,7 @@ create procedure dfa.sp_processWorkflowEvent(workflowId BIGINT UNSIGNED
 this_proc: BEGIN
 	declare stateTyp INT default NULL;
 	declare isStatePseudo BIT default 0;
-	declare sendEventToParent INT;
+	declare sendEventToParent INT DEFAULT NULL;
 	declare nextStateTyp INT default NULL;
 	declare workflowTyp INT default NULL;
 	declare errorMsgTx VARCHAR(256) default NULL;
@@ -502,10 +536,10 @@ this_proc: BEGIN
 	CALL dfa.sp_processDfaDataAndConstraints(workflowId);
 
 	-- Both load and validate permissions for workflowTyp, stateTyp, and nextStateTyp.
-	select dw.WORKFLOW_TYP, SPAWN_DFA_WORKFLOW_ID, SPAWN_DFA_STATE_ID, SUB_STATE
+	select dw.WORKFLOW_TYP, dfaw.SPAWN_DFA_WORKFLOW_ID, dfaw.SPAWN_DFA_STATE_ID, dfaw.SUB_STATE
 	into workflowTyp, parentWorkflowId, parentStateId, isSubstate from DFA_WORKFLOW dfaw 
 		JOIN LKUP_WORKFLOW_TYP dw ON dw.WORKFLOW_TYP = dfaw.WORKFLOW_TYP
-		JOIN ref_dfa_constraint rdc ON dw.CONSTTAINT_ID = rdc.CONSTRAINT_ID and rdc.REF_ID = refId
+		JOIN ref_dfa_constraint rdc ON dw.CONSTRAINT_ID = rdc.CONSTRAINT_ID and rdc.DFA_WORKFLOW_ID = workflowId AND rdc.REF_ID = refId
 		where dfaw.DFA_WORKFLOW_ID = workflowId;
 		
 	if workflowTyp IS NULL THEN
@@ -513,14 +547,15 @@ this_proc: BEGIN
 			select 'Insufficent permission or workflow not found ' + dw.WORKFLOW_NM into errorMsgTx
 		from DFA_WORKFLOW dfaw 
 		JOIN LKUP_WORKFLOW_TYP dw ON dw.WORKFLOW_TYP = dfaw.WORKFLOW_TYP
-		JOIN ref_dfa_constraint rdc ON dw.CONSTTAINT_ID = rdc.CONSTRAINT_ID and rdc.REF_ID = refId
+		JOIN ref_dfa_constraint rdc ON dw.CONSTTAINT_ID = rdc.CONSTRAINT_ID and rdc.DFA_WORKFLOW_ID = workflowId and rdc.REF_ID = refId
 		where dfaw.DFA_WORKFLOW_ID = workflowId;			
 		SIGNAL SQLSTATE '45000' SET message_text=errorMsgTx;
 		END IF;
 		LEAVE this_proc;
 	END IF;
 
-	select STATE_TYP, UNDO_STATE_ID, DFA_STATE_ID into stateTyp, thisUndoStateId, currentDfaStateId from DFA_WORKFLOW_STATE 
+	select STATE_TYP, UNDO_STATE_ID, DFA_STATE_ID into stateTyp, thisUndoStateId, currentDfaStateId 
+    from DFA_WORKFLOW_STATE 
 		where DFA_WORKFLOW_ID = workflowId AND IS_CURRENT = 1;
 
 	-- Optimistic locking: If the state of this workflow does not match the state
@@ -533,14 +568,14 @@ this_proc: BEGIN
 		LEAVE this_proc;
 	END IF;
 		
-	select NEXT_STATE_TYP into nextStateTyp from LKUP_EVENT_STATE_TRANS lest
-		JOIN ref_dfa_constraint rdc1 ON lest.CONSTRAINT_ID = rdc1.CONSTRAINT_ID and rdc.REF_ID = refId
-		JOIN LKUP_STATE ls ON LKUP_EVENT_STATE_TRANS.NEXT_STATE_TYP = ls.STATE_TYP
-		LEFT JOIN ref_dfa_constraint rdc2 ON ls.ALT_STATE_TYP IS NULL AND ls.CONSTRAINT_ID = rdc2.CONSTRAINT_ID	
-		where EVENT_TYP = eventTyp and STATE_TYP = stateTyp and rdc1.ALLOW_UPDATE = 1
+	select lest.NEXT_STATE_TYP, lest.PARENT_EVENT_TYP into nextStateTyp, sendEventToParent from LKUP_EVENT_STATE_TRANS lest
+		JOIN ref_dfa_constraint rdc1 ON lest.CONSTRAINT_ID = rdc1.CONSTRAINT_ID and rdc1.DFA_WORKFLOW_ID = workflowId and rdc1.REF_ID = refId
+		JOIN LKUP_STATE ls ON lest.NEXT_STATE_TYP = ls.STATE_TYP
+		LEFT JOIN ref_dfa_constraint rdc2 ON ls.ALT_STATE_TYP IS NULL and rdc2.DFA_WORKFLOW_ID = workflowId and rdc2.REF_ID = refId AND ls.CONSTRAINT_ID = rdc2.CONSTRAINT_ID	
+		where lest.EVENT_TYP = eventTyp and lest.STATE_TYP = stateTyp and rdc1.ALLOW_UPDATE = 1
 			AND (ls.ALT_STATE_TYP IS NOT NULL OR rdc2.ALLOW_UPDATE = 1);
 
-	CALL dfa.sp_findNextValidState(nextStateTyp, refId, nextStateTyp, isStatePseudo, sendEventToParent);
+	CALL dfa.sp_findNextValidState(workflowId, nextStateTyp, refId, nextStateTyp, isStatePseudo);
 
 	IF nextStateTyp IS NULL THEN
 		IF (raiseError = 1) THEN
@@ -566,10 +601,10 @@ this_proc: BEGIN
 -- insert the newly minted state.  This must be done before any other state processing
 -- because the role / role data will change as the system recursively resolved
 -- other state / substates.
-	INSERT INTO dfa_workflow_state
+	INSERT INTO DFA_WORKFLOW_STATE
 	(DFA_WORKFLOW_ID, IS_CURRENT, STATE_TYP, EVENT_TYP, UNDO_STATE_ID, COMMENT_TX, MOD_BY)
 	VALUES (workflowId, isCurrent, nextStateTyp, eventTyp, undoStateId, commentTx, modBy);
-
+	DELETE FROM tmp_dfa_clear_current WHERE DFA_WORKFLOW_ID = workflowId;
 
 	IF parentWorkflowId IS NOT NULL THEN
 		-- Send the event to the parent, regardless of if we are a substate or not.
@@ -580,6 +615,7 @@ this_proc: BEGIN
 			select STATE_TYP into parentStateTyp from DFA_WORKFLOW_STATE where 
 			DFA_WORKFLOW_ID = parentWorkflowId AND DFA_STATE_ID = parentStateId AND IS_CURRENT = 1;
 
+			SET parentStateTyp = NULL;
 			if (parentStateTyp IS NOT NULL) THEN
 				-- See if there are any active states.  If not, send the event defined by LKUP_WORKFLOW_STATE_TYP_CREATE.EVENT_WHEN_SUB_COMPLETED.
 				SET sendEventToParent = NULL;
@@ -605,8 +641,23 @@ this_proc: BEGIN
 END GO
 delimiter ;
 
-grant EXECUTE ON PROCEDURE dfa.sp_processWorkflowEvent to dfa_user;
+drop procedure if exists dfa.sp_processWorkflowEvent;
+delimiter GO
+create procedure dfa.sp_processWorkflowEvent(workflowId BIGINT UNSIGNED
+	, eventTyp INT
+	, commentTx MEDIUMTEXT
+	, modBy VARCHAR(32)
+	, raiseError BIT
+	, refId INT /* 0 for interactive, 1 for system */
+	, dfaStateId MEDIUMINT/* Optional - may be null */) 
+	MODIFIES SQL DATA
+BEGIN
+	CALL dfa.sp_do_processWorkflowEvent(workflowId, eventTyp, commentTx, modBy, raiseError, refId, dfaStateId);
+    CALL dfa.sp_processDfaDataAndConstraints(workflowId);
+END GO
+delimiter ;
 
+grant EXECUTE ON PROCEDURE dfa.sp_processWorkflowEvent to dfa_user;
 
 flush PRIVILEGES;
 
