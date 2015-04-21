@@ -7,7 +7,7 @@ re-creating it again.
 
 use mysql;
 
-drop database dfa;
+drop database if exists dfa;
 create database dfa;
 use dfa;
 
