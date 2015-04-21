@@ -435,23 +435,32 @@ grant EXECUTE ON PROCEDURE dfa.sp_cleanupSessionDataAndRoles to dfa_viewer;
 
 drop procedure if exists dfa.sp_configureForApplication;
 delimiter GO
-CREATE PROCEDURE dfa.sp_configureForApplication(applicationId INT, systemRoleName VARCHAR(128), dataPopulateCallStatement VARCHAR(128)) 
+CREATE PROCEDURE dfa.sp_configureForApplication(applicationId INT, recordStatesToRefId INT, systemRoleName VARCHAR(128), dataPopulateCallStatement VARCHAR(128)) 
 BEGIN
 /**********************************************************
 Configure DFA database session for application using DFA
 framework.  applicationId is required and corresponds to
 your application in LKUP_APPLICATION.  systemRoleName is
 optional.  If NULL is passed in, 'SYSTEM' will be used.
+recordStatesToRefId is the refId used in 
+ref_dfa_workflow_state.REF_ID to automatically record
+any new dfa states (including new workflows).  If NULL
+or < 0, no states are recorded.  If 0, new states are visible
+to view session_dfa_workflow_state.  New states are created
+with OUTPUT=1 to distinguish them from incoming workflows
+and states.
 dataPopulateCallStatement is a stored procedure that is
 used to update the application's data when a DFAs state
 changes.  It will have the dfaWorkflowId from 
 dfa.sp_processDfaDataAndConstraints passed into it and 
 should have syntax like 'CALL myAppsDataUpdateProc(?)'
+Internally, this proc creates a prepared statement that
+will be used to execute the proc provided.
 
-This proc must have execute permission granted to the
-dfadataexecutor@localhost user.  The proc runs in that
-user's context.  This is to prevent an evil user from 
-running commmands as root by supplying
+The dataPopulateCallStatement proc must have execute 
+permission granted to the dfadataexecutor@localhost user.
+The proc runs in that user's context.  This is to prevent
+an evil user from running commmands as root by supplying
 a proc that has the SQL SECURITY INVOKER characteristic.
 
 **********************************************************/
@@ -476,6 +485,8 @@ IF (dataPopulateCallStatement IS NULL) THEN
 else
 	SET @dfaSpProcessNullApplicationDataDataPopulateCallStatement = dataPopulateCallStatement;
 END IF;
+
+set @dfa_act_state_ref_id = recordStatesToRefId;
 
 PREPARE application_data_populate_proc FROM @dfaSpProcessNullApplicationDataDataPopulateCallStatement;
 
@@ -687,7 +698,7 @@ VALUES (2,'Test Workflow 2','Workflow Test 2',2,1,1,'Test');
 
 -- Typically, run from here.
 CALL dfa.sp_cleanupSessionData();
-CALL dfa.sp_configureForApplication(2,NULL,NULL);
+CALL dfa.sp_configureForApplication(2,0,NULL,NULL);
 
 insert into ref_dfa_constraint (REF_ID,DFA_WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE) VALUES (0,1,1,1);
 insert into ref_dfa_constraint (REF_ID,DFA_WORKFLOW_ID,CONSTRAINT_ID,ALLOW_UPDATE) VALUES (1,1,1,1);

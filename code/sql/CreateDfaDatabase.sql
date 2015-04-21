@@ -1053,6 +1053,11 @@ create or replace view session_dfa_workflow AS
 
 grant select on session_dfa_workflow to dfa_user;
 
+create or replace view session_dfa_workflow_out AS
+	select DISTINCT DFA_WORKFLOW_ID, OUTPUT from tmp_dfa_workflow_state where CONN_ID = CONNECTION_ID() AND REF_ID=0;
+
+grant select on session_dfa_workflow_out to dfa_user;
+
 create table tmp_user_role (
 	CONN_ID BIGINT UNSIGNED NOT NULL DEFAULT 0,
 	REF_ID  MEDIUMINT DEFAULT 0 NOT NULL,

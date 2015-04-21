@@ -15,7 +15,7 @@ ROLLBACK statement.
 
 START TRANSACTION;
 -- This is where the application will insert the user's roles.
-CALL dfa.sp_configureForApplication(1000, NULL, NULL);
+CALL dfa.sp_configureForApplication(1000, 0, NULL, NULL);
 CALL dfa.sp_cleanupSessionDataAndRoles();
 insert into session_user_role (ROLE_NM) VALUES ('USER');
 CALL dfa.sp_startWorkflow(1000, 'Unit Test - Start Workflow', 'Employee UT', 1, @utDfaWorkflowId);
