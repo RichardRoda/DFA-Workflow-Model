@@ -1,11 +1,8 @@
 
 /******************************************************************************
-MySql file to create the basic DFA workflow schema.  This file should only
+MariaDB file to create the basic DFA workflow schema.  This file should only
 be run for initial create as it erases (drops) the dfa database before
 re-creating it again.
-
-Note: In MySql, the length specified for the int is a display width for
-a result set, and has no effect on the range of the datatype.
 ******************************************************************************/
 
 use mysql;
@@ -14,10 +11,16 @@ drop database dfa;
 create database dfa;
 use dfa;
 
-/*********************************************************************
-These lookup tables are frequently accessed but infrequently modified.
-Therefore, liberally create indices for them.
-*********************************************************************/
+/****************************************************************************
+Create groups and users for the DFA schema.  Groups created:
+dfa_viewer: Group which may read but not update DFA data.
+
+dfa_user: Group intended for applications that use the DFA model.  May
+read and update DFA records, but not the controlling lookup tables.
+
+dfa_admin: Group intended for developers of applications that use the DFA
+model.  May read and update DFA tables and lookups..
+****************************************************************************/
 
 -- Use stored proc to conditionally create these roles.
 delimiter GO
@@ -55,6 +58,12 @@ drop procedure dfa.createUserAdminRoles;
 -- dfa_admin automatically gets any dfa_user privilidges.
 grant dfa_viewer to dfa_user;
 grant dfa_user to dfa_admin;
+
+/*********************************************************************
+The tables that follow are the DFA tables.  They include a comment
+attribute that explains their purpose.  A comment field is used intead
+of a comment in the hopes of SQL tool support for them.
+*********************************************************************/
 
 CREATE TABLE LKUP_CONSTRAINT
 	(
@@ -120,8 +129,8 @@ CREATE TABLE LKUP_CONSTRAINT_APP (
 	FIELD_COUNT SMALLINT UNSIGNED DEFAULT 0 NOT NULL,
 	ROLE_COUNT SMALLINT UNSIGNED DEFAULT 0 NOT NULL,
 	PRIMARY KEY (APPLICATION_ID,CONSTRAINT_ID),
-	CONSTRAINT FOREIGN KEY (APPLICATION_ID) REFERENCES LKUP_APPLICATION (APPLICATION_ID),
-	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
+	CONSTRAINT FK_LKUP_CONSTRAINT_APP_APPLICATION FOREIGN KEY (APPLICATION_ID) REFERENCES LKUP_APPLICATION (APPLICATION_ID),
+	CONSTRAINT FK_LKUP_CONSTRAINT_APP_CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
     CONSTRAINT NO_CONSTRAINT_0 CHECK (CONSTRAINT_ID <> 0),
     INDEX (FIELD_COUNT),
     INDEX (ROLE_COUNT)
@@ -245,8 +254,8 @@ CREATE TABLE LKUP_FIELD (
 	FIELD_TX VARCHAR(60) NOT NULL,
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-	CONSTRAINT FOREIGN KEY (FIELD_TYP_ID) REFERENCES LKUP_FIELD_TYP (FIELD_TYP_ID),
-	CONSTRAINT FOREIGN KEY (ENTITY_ID) REFERENCES LKUP_ENTITY (ENTITY_ID)
+	CONSTRAINT FK_LKUP_FIELD_FIELD_TYP_ID FOREIGN KEY (FIELD_TYP_ID) REFERENCES LKUP_FIELD_TYP (FIELD_TYP_ID),
+	CONSTRAINT FK_LKUP_FIELD_ENTITY_ID FOREIGN KEY (ENTITY_ID) REFERENCES LKUP_ENTITY (ENTITY_ID)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -287,8 +296,8 @@ CREATE TABLE LKUP_CONSTRAINT_APP_FIELD (
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	PRIMARY KEY (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID),
-	CONSTRAINT FOREIGN KEY (APPLICATION_ID,CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP (APPLICATION_ID,CONSTRAINT_ID),
-	CONSTRAINT FOREIGN KEY (FIELD_ID) REFERENCES LKUP_FIELD (FIELD_ID),
+	CONSTRAINT FK_LKUP_CONSTRAINT_APP_FIELD_APP_CONSTRAINT FOREIGN KEY (APPLICATION_ID,CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP (APPLICATION_ID,CONSTRAINT_ID),
+	CONSTRAINT FK_LKUP_CONSTRAINT_APP_FIELD_FIELD_ID FOREIGN KEY (FIELD_ID) REFERENCES LKUP_FIELD (FIELD_ID),
 	INDEX (NULL_VALID)
 )
 COLLATE='utf8_general_ci'
@@ -399,8 +408,8 @@ CREATE TABLE LKUP_CONSTRAINT_FIELD_INT_RANGE (
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	PRIMARY KEY (APPLICATION_ID,FIELD_ID,CONSTRAINT_ID, SMALLEST_VALUE),
-	CONSTRAINT FOREIGN KEY (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP_FIELD (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID),
-	CONSTRAINT CHECK (SMALLEST_VALUE <= LARGEST_VALUE),
+	CONSTRAINT FOREIGN KEY FK_APP_CONSTRAINT_FIELD_INT (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP_FIELD (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID),
+	CONSTRAINT SMALLEST_LEQ_LARGEST_INT CHECK (SMALLEST_VALUE <= LARGEST_VALUE),
 	INDEX (LARGEST_VALUE)
 )
 COLLATE='utf8_general_ci'
@@ -412,9 +421,15 @@ grant insert,update,delete on LKUP_CONSTRAINT_FIELD_INT_RANGE to dfa_admin;
 
 -- Enforce no overlaps.
 delimiter GO
-create trigger LKUP_CONSTRAINT_FIELD_INT_RANGE_BEFORE_INSERT before insert on LKUP_CONSTRAINT_FIELD_INT_RANGE
+create trigger LKUP_CONSTRAINT_FIELD_INT_RANGE_AFTER_INSERT after insert on LKUP_CONSTRAINT_FIELD_INT_RANGE
 for each row
 begin
+/*
+Enforce that no ranges may overlap.  A check constraint enforces that 
+SMALLEST_VALUE <= LARGEST_VALUE.
+Note: When more than one date overlaps the new row, the error message will
+contain the first one found.
+*/
 	DECLARE ERROR_TX VARCHAR(128);
 	if exists (select * from LKUP_CONSTRAINT_FIELD_INT_RANGE lcfir where lcfir.APPLICATION_ID = NEW.APPLICATION_ID and lcfir.FIELD_ID = NEW.FIELD_ID and lcfir.CONSTRAINT_ID = NEW.CONSTRAINT_ID
 		AND lcfir.SMALLEST_VALUE <= NEW.LARGEST_VALUE and NEW.SMALLEST_VALUE <= lcfir.LARGEST_VALUE LIMIT 1) THEN		
@@ -430,6 +445,15 @@ delimiter GO
 create trigger LKUP_CONSTRAINT_FIELD_INT_RANGE_AFTER_UPDATE after update on LKUP_CONSTRAINT_FIELD_INT_RANGE
 for each row
 begin
+/*
+Enforce that no ranges may overlap.  A check constraint enforces that 
+SMALLEST_VALUE <= LARGEST_VALUE.
+Note: When more than one date overlaps the new row, the error message will
+contain the first one found.
+
+This is an after update to ensure that in the event a bulk update is used
+all rows contain their new values before being compared.
+*/
 	DECLARE ERROR_TX VARCHAR(128);
 	if exists (select * from LKUP_CONSTRAINT_FIELD_INT_RANGE lcfir where lcfir.APPLICATION_ID = NEW.APPLICATION_ID and lcfir.FIELD_ID = NEW.FIELD_ID and lcfir.CONSTRAINT_ID = NEW.CONSTRAINT_ID AND NEW.SMALLEST_VALUE <> lcfir.SMALLEST_VALUE
 		AND lcfir.SMALLEST_VALUE <= NEW.LARGEST_VALUE and NEW.SMALLEST_VALUE <= lcfir.LARGEST_VALUE LIMIT 1) THEN		
@@ -472,13 +496,13 @@ CREATE TABLE LKUP_CONSTRAINT_FIELD_DATE_RANGE (
 	APPLICATION_ID INT NOT NULL,
 	FIELD_ID INT NOT NULL,
 	CONSTRAINT_ID INT NOT NULL,
-	SMALLEST_VALUE DATE NOT NULL DEFAULT '1000-01-01',
+	SMALLEST_VALUE DATE NOT NULL DEFAULT '0000-00-00',
 	LARGEST_VALUE DATE NOT NULL DEFAULT '9999-12-31',
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	PRIMARY KEY (APPLICATION_ID,FIELD_ID,CONSTRAINT_ID, SMALLEST_VALUE),
-	CONSTRAINT FOREIGN KEY (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP_FIELD (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID),
-	CONSTRAINT CHECK (SMALLEST_VALUE <= LARGEST_VALUE),
+	CONSTRAINT FK_APP_CONSTRAINT_FIELD_DATE FOREIGN KEY (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP_FIELD (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID),
+	CONSTRAINT SMALLEST_LEQ_LARGEST_DATE CHECK (SMALLEST_VALUE <= LARGEST_VALUE),
 	INDEX (LARGEST_VALUE)
 )
 COLLATE='utf8_general_ci'
@@ -492,9 +516,15 @@ grant insert,update,delete on LKUP_CONSTRAINT_FIELD_DATE_RANGE to dfa_admin;
 
 -- Enforce no overlaps.
 delimiter GO
-create trigger LKUP_CONSTRAINT_FIELD_DATE_RANGE_BEFORE_INSERT before insert on LKUP_CONSTRAINT_FIELD_DATE_RANGE
+create trigger LKUP_CONSTRAINT_FIELD_DATE_RANGE_AFTER_INSERT after insert on LKUP_CONSTRAINT_FIELD_DATE_RANGE
 for each row
 begin
+/*
+Enforce that no ranges may overlap.  A check constraint enforces that 
+SMALLEST_VALUE <= LARGEST_VALUE.
+Note: When more than one date overlaps the new row, the error message will
+contain the first one found.
+*/
 	DECLARE ERROR_TX VARCHAR(128);
 	if exists (select * from LKUP_CONSTRAINT_FIELD_INT_RANGE lcfir where lcfir.APPLICATION_ID = NEW.APPLICATION_ID and lcfir.FIELD_ID = NEW.FIELD_ID and lcfir.CONSTRAINT_ID = NEW.CONSTRAINT_ID
 		AND lcfir.SMALLEST_VALUE <= NEW.LARGEST_VALUE and NEW.SMALLEST_VALUE <= lcfir.LARGEST_VALUE LIMIT 1) THEN		
@@ -510,6 +540,15 @@ delimiter GO
 create trigger LKUP_CONSTRAINT_FIELD_DATE_RANGE_AFTER_UPDATE after update on LKUP_CONSTRAINT_FIELD_DATE_RANGE
 for each row
 begin
+/*
+Enforce that no ranges may overlap.  A check constraint enforces that 
+SMALLEST_VALUE <= LARGEST_VALUE.
+Note: When more than one date overlaps the new row, the error message will
+contain the first one found.
+
+This is an after update to ensure that in the event a bulk update is used
+all rows contain their new values before being compared.
+*/
 	DECLARE ERROR_TX VARCHAR(128);
 	if exists (select * from LKUP_CONSTRAINT_FIELD_INT_RANGE lcfir where lcfir.APPLICATION_ID = NEW.APPLICATION_ID and lcfir.FIELD_ID = NEW.FIELD_ID and lcfir.CONSTRAINT_ID = NEW.CONSTRAINT_ID AND NEW.SMALLEST_VALUE <> lcfir.SMALLEST_VALUE
 		AND lcfir.SMALLEST_VALUE <= NEW.LARGEST_VALUE and NEW.SMALLEST_VALUE <= lcfir.LARGEST_VALUE LIMIT 1) THEN		
@@ -529,12 +568,12 @@ CREATE TABLE LKUP_CONSTRAINT_FIELD_BIT (
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	PRIMARY KEY (APPLICATION_ID,FIELD_ID,CONSTRAINT_ID),
-	CONSTRAINT FOREIGN KEY (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP_FIELD (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID),
+	CONSTRAINT FK_APP_CONSTRAINT_FIELD_BIT FOREIGN KEY (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT_APP_FIELD (APPLICATION_ID, FIELD_ID, CONSTRAINT_ID),
 	INDEX (VALID_VALUE)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
-COMMENT='Defines valid truth (or bit) values for a bit constraint.  If unspecified, defaults to true.  NULL is permitted in order to specify that any value is valid.  The NULL value exists to allow a bit constraint to be defined such that a bit value (or fact) must exist, but it actual value is immaterial.';
+COMMENT='Defines valid truth (or bit) values for a bit constraint.  If unspecified, defaults to true.  NULL is permitted in order to specify that either true or false (0 or 1) are valid.  The NULL value exists to allow a bit constraint to be defined such that a bit value (or fact) must exist (not be null), but it actual value is immaterial.';
 
 grant select on LKUP_CONSTRAINT_FIELD_BIT to dfa_user;
 grant insert,update,delete on LKUP_CONSTRAINT_FIELD_BIT to dfa_admin;
@@ -583,10 +622,11 @@ create table LKUP_STATE (
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	CONSTRAINT_ID  INT NOT NULL DEFAULT 1,
-	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
-	CONSTRAINT FOREIGN KEY (ALT_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
-	CONSTRAINT CHECK (ACTIVE=0 OR PSEUDO=0),
-	CONSTRAINT CHECK (ACTIVE=1 OR SUB_SATISFIED=1), -- SUB_SATISFIED = 1 when ACTIVE = 0
+	CONSTRAINT FK_LKUP_STATE_CONSTRAINT_ID FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
+	CONSTRAINT FK_LKUP_STATE_ALT_STATE_TYP FOREIGN KEY (ALT_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
+	CONSTRAINT LKUP_STATE_NO_ACTIVE_PSEUDO CHECK (ACTIVE=0 OR PSEUDO=0),
+    CONSTRAINT NO_EXPECTED_NEXT_WHEN_INACTIVE CHECK (EXPECTED_NEXT_EVENT IS NULL OR ACTIVE=1),
+	CONSTRAINT LKUP_STATE_SUB_SATISFIED_WHEN_INACTIVE CHECK (ACTIVE=1 OR SUB_SATISFIED=1), -- SUB_SATISFIED = 1 when ACTIVE = 0
 	PRIMARY KEY (STATE_TYP),
 	INDEX (ACTIVE),
 	INDEX (ATTENTION),
@@ -610,12 +650,12 @@ create table LKUP_EVENT_STATE_TRANS (
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,	
 	CONSTRAINT_ID  INT NOT NULL DEFAULT 1,
-	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
+	CONSTRAINT FK_LKUP_EVENT_STATE_TRANS_CONSTRAINT_ID FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
 	PRIMARY KEY (STATE_TYP,EVENT_TYP),
-	CONSTRAINT FOREIGN KEY (STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
-	CONSTRAINT FOREIGN KEY (EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP),
-	CONSTRAINT FOREIGN KEY (PARENT_EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP),
-	CONSTRAINT FOREIGN KEY (NEXT_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP)
+	CONSTRAINT FK_LKUP_EVENT_STATE_TRANS_STATE_TYP FOREIGN KEY (STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
+	CONSTRAINT FK_LKUP_EVENT_STATE_TRANS_EVENT_TYP FOREIGN KEY (EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP),
+	CONSTRAINT FK_LKUP_EVENT_STATE_TRANS_PARENT_EVENT_TYP FOREIGN KEY (PARENT_EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP),
+	CONSTRAINT FK_LKUP_EVENT_STATE_TRANS_NEXT_STATE_TYP FOREIGN KEY (NEXT_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -627,11 +667,27 @@ grant insert,update,delete on LKUP_EVENT_STATE_TRANS to dfa_admin;
 alter table LKUP_STATE ADD CONSTRAINT FOREIGN KEY (STATE_TYP,EXPECTED_NEXT_EVENT) 
 	REFERENCES LKUP_EVENT_STATE_TRANS (STATE_TYP,EVENT_TYP);
 
--- No transitions from inactive states
+delimiter GO
+CREATE TRIGGER lkup_state_before_insert BEFORE INSERT ON LKUP_STATE 
+FOR EACH ROW 
+BEGIN
+/*
+Trigger to ensure that SUB_SATISFIED = 1 for an inactive state.
+*/
+	IF (NEW.ACTIVE = 0 AND NEW.SUB_SATISFIED = 0) THEN
+		SET NEW.SUB_SATISFIED = 1;
+	END IF;
+END GO
+delimiter ; 
+
 delimiter GO
 CREATE TRIGGER lkup_state_before_update BEFORE UPDATE ON LKUP_STATE 
 FOR EACH ROW 
 BEGIN
+/*
+Trigger to enforce that a state with outgoing event state transitions
+may not be an inactive state.  Also sets SUB_SATISFIED =1 for inactive state.
+*/
 	DECLARE ERROR_TX VARCHAR(128);
 	IF (NEW.ACTIVE = 0 AND OLD.ACTIVE = 1) THEN
 		IF EXISTS (select * from LKUP_EVENT_STATE_TRANS lest where 
@@ -651,6 +707,9 @@ delimiter ;
 -- No creating transitions from inactive states.
 delimiter GO
 CREATE TRIGGER lkup_event_state_trans_before_insert BEFORE INSERT ON LKUP_EVENT_STATE_TRANS FOR EACH ROW BEGIN
+/*
+Trigger to prevent creation of state transitions from inactive states.
+*/
 	IF EXISTS (select * from LKUP_STATE where LKUP_STATE.STATE_TYP=NEW.STATE_TYP
 		AND LKUP_STATE.ACTIVE = 0) THEN
 			SIGNAL SQLSTATE '45000' SET message_text='Unable to insert transition for inactive state';
@@ -692,9 +751,9 @@ create table LKUP_WORKFLOW_TYP (
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	CONSTRAINT_ID  INT NOT NULL DEFAULT 1,
-	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
-	CONSTRAINT FOREIGN KEY (START_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
-	CONSTRAINT FOREIGN KEY (START_EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP)
+	CONSTRAINT FK_LKUP_WORKFLOW_TYP_CONSTRAINT_ID FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
+	CONSTRAINT FK_LKUP_WORKFLOW_TYP_START_STATE_TYP FOREIGN KEY (START_STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
+	CONSTRAINT FK_LKUP_WORKFLOW_TYP_START_EVENT_TYP FOREIGN KEY (START_EVENT_TYP) REFERENCES LKUP_EVENT (EVENT_TYP)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -709,9 +768,9 @@ create table LKUP_WORKFLOW_TYP_ADDITIONAL (
 	FIELD_ID INT NOT NULL,
     FIELD_ORDER SMALLINT DEFAULT 0 NOT NULL,
     PRIMARY KEY (CONSTRAINT_ID,WORKFLOW_TYP,FIELD_ID),
-	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
-    CONSTRAINT FOREIGN KEY (WORKFLOW_TYP) REFERENCES LKUP_WORKFLOW_TYP (WORKFLOW_TYP),
-    CONSTRAINT FOREIGN KEY (FIELD_ID) REFERENCES LKUP_FIELD (FIELD_ID)
+	CONSTRAINT FK_LKUP_WORKFLOW_TYP_ADDITIONAL_CONSTRAINT_ID FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
+    CONSTRAINT FK_LKUP_WORKFLOW_TYP_ADDITIONAL_WORKFLOW_TYP FOREIGN KEY (WORKFLOW_TYP) REFERENCES LKUP_WORKFLOW_TYP (WORKFLOW_TYP),
+    CONSTRAINT FK_LKUP_WORKFLOW_TYP_ADDITIONAL_FIELD_ID FOREIGN KEY (FIELD_ID) REFERENCES LKUP_FIELD (FIELD_ID)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -728,11 +787,11 @@ create table LKUP_WORKFLOW_STATE_TYP_CREATE (
 	MOD_BY VARCHAR(32) NOT NULL,
 	MOD_DT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	CONSTRAINT_ID INT NOT NULL DEFAULT 2, -- Executes as system.
-	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
+	CONSTRAINT FK_WORKFLOW_STATE_TYP_CREATE_CONSTRAINT_ID FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
 	PRIMARY KEY (STATE_TYP,	WORKFLOW_TYP),
-	FOREIGN KEY (STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
-	FOREIGN KEY (EVENT_WHEN_SUB_COMPLETED) REFERENCES LKUP_EVENT (EVENT_TYP),
-	FOREIGN KEY (WORKFLOW_TYP)  REFERENCES LKUP_WORKFLOW_TYP (WORKFLOW_TYP)
+	FOREIGN KEY FK_WORKFLOW_STATE_TYP_CREATE_STATE_TYP (STATE_TYP) REFERENCES LKUP_STATE (STATE_TYP),
+	FOREIGN KEY FK_WORKFLOW_STATE_TYP_CREATE_EVENT_WHEN_SUB_COMPLETED (EVENT_WHEN_SUB_COMPLETED) REFERENCES LKUP_EVENT (EVENT_TYP),
+	FOREIGN KEY FK_WORKFLOW_STATE_TYP_CREATE_WORKFLOW_TYP (WORKFLOW_TYP)  REFERENCES LKUP_WORKFLOW_TYP (WORKFLOW_TYP)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -817,12 +876,20 @@ COMMENT='This internal table is a workaround for the maria db limitation of not 
 delimiter GO
 CREATE TRIGGER tmp_dfa_clear_current_AFTER_DELETE AFTER DELETE ON tmp_dfa_clear_current
 FOR EACH ROW BEGIN
+/*
+Clear IS_CURRENT from corresponsing rows in workaround table tmp_dfa_clear_current.  This is
+used by the stored proc that dfa.sp_processWorkflowEvent stored proc.
+*/
 	UPDATE DFA_WORKFLOW_STATE SET IS_CURRENT=0 WHERE IS_CURRENT=1 AND DFA_WORKFLOW_ID = OLD.DFA_WORKFLOW_ID and DFA_STATE_ID = OLD.DFA_STATE_ID;
 END GO
 delimiter ;
 
 delimiter GO
 CREATE TRIGGER DFA_WORKFLOW_AFTER_INSERT AFTER INSERT ON DFA_WORKFLOW FOR EACH ROW BEGIN
+/*
+Automatically create initial state for workflow and clear any other states in
+tmp_dfa_clear_current.
+*/
 	DECLARE STATE_TYP, EVENT_TYP INT;
 	select START_STATE_TYP, START_EVENT_TYP INTO STATE_TYP, EVENT_TYP FROM LKUP_WORKFLOW_TYP WHERE
 		LKUP_WORKFLOW_TYP.WORKFLOW_TYP = NEW.WORKFLOW_TYP;
@@ -835,6 +902,11 @@ delimiter ;
 
 delimiter GO
 CREATE TRIGGER DFA_WORKFLOW_STATE_BEFORE_INSERT BEFORE INSERT ON DFA_WORKFLOW_STATE FOR EACH ROW BEGIN
+/*
+This trigger manages the current workflow state (with help from tmp_dfa_clear_current
+workaround table).  This trigger also manages UNDO_STATE_ID when not explicitly passed in,
+and always manages PARENT_STATE_ID and IS_PASSIVE.
+*/
 	DECLARE NEXT_STATE_ID MEDIUMINT UNSIGNED;
 	DECLARE CURRENT_STATE_ID MEDIUMINT UNSIGNED;
 	IF (NEW.DFA_STATE_ID IS NULL OR NEW.DFA_STATE_ID = 0) THEN
@@ -940,7 +1012,7 @@ create table tmp_dfa_workflow_state (
 	DFA_STATE_ID MEDIUMINT UNSIGNED DEFAULT 1 NOT NULL,
 	OUTPUT BIT DEFAULT false,
 	PRIMARY KEY (CONN_ID,REF_ID,DFA_WORKFLOW_ID,DFA_STATE_ID),
-	FOREIGN KEY (DFA_WORKFLOW_ID,DFA_STATE_ID) REFERENCES DFA_WORKFLOW_STATE (DFA_WORKFLOW_ID,DFA_STATE_ID),
+	FOREIGN KEY fk_tmp_dfa_workflow_state (DFA_WORKFLOW_ID,DFA_STATE_ID) REFERENCES DFA_WORKFLOW_STATE (DFA_WORKFLOW_ID,DFA_STATE_ID),
 	INDEX (OUTPUT)	
 )
 COLLATE='utf8_general_ci'
@@ -951,6 +1023,10 @@ grant select,insert,update,delete on tmp_dfa_workflow_state to dfa_admin;
 
 delimiter GO
 CREATE TRIGGER tmp_dfa_workflow_state_before_insert BEFORE INSERT ON tmp_dfa_workflow_state FOR EACH ROW BEGIN
+/*
+Trigger to set CONN_ID to the current database connection ID.  This is the 'magic' that
+makes the per-connection id views work.
+*/
 	SET NEW.CONN_ID = CONNECTION_ID();
 END GO
 delimiter ;
@@ -991,6 +1067,10 @@ grant select,insert,update,delete on tmp_user_role to dfa_admin;
 
 delimiter GO
 CREATE TRIGGER tmp_user_role_before_insert BEFORE INSERT ON tmp_user_role FOR EACH ROW BEGIN
+/*
+Trigger to set CONN_ID to the current database connection ID.  This is the 'magic' that
+makes the per-connection id views work.
+*/
 	SET NEW.CONN_ID = CONNECTION_ID();
 END GO
 delimiter ;
@@ -1016,8 +1096,8 @@ create table tmp_dfa_field_value (
     DATE_VALUE DATE NULL,
     CHAR_VALUE VARCHAR (8191),
 	PRIMARY KEY (CONN_ID,DFA_WORKFLOW_ID,FIELD_ID),
-	CONSTRAINT FOREIGN KEY (DFA_WORKFLOW_ID) REFERENCES DFA_WORKFLOW (DFA_WORKFLOW_ID),
-	CONSTRAINT FOREIGN KEY (FIELD_ID) REFERENCES LKUP_FIELD (FIELD_ID),
+	CONSTRAINT fk_tmp_dfa_field_value_workflow_id FOREIGN KEY (DFA_WORKFLOW_ID) REFERENCES DFA_WORKFLOW (DFA_WORKFLOW_ID),
+	CONSTRAINT fk_tmp_dfa_field_value_field_id FOREIGN KEY (FIELD_ID) REFERENCES LKUP_FIELD (FIELD_ID),
     INDEX (DISPLAY_VALUE desc, FIELD_ORDER),
     INDEX (BIT_VALUE),
     INDEX (DATE_VALUE),
@@ -1031,6 +1111,10 @@ grant select,insert,update,delete on tmp_dfa_field_value to dfa_admin;
 
 delimiter GO
 CREATE TRIGGER tmp_dfa_field_value_before_insert BEFORE INSERT ON tmp_dfa_field_value FOR EACH ROW BEGIN
+/*
+Trigger to set CONN_ID to the current database connection ID.  This is the 'magic' that
+makes the per-connection id views work.
+*/
 	SET NEW.CONN_ID = CONNECTION_ID();
 END GO
 delimiter ;
@@ -1048,9 +1132,9 @@ create table tmp_dfa_constraint (
 	ALLOW_UPDATE    BIT DEFAULT true NOT NULL,
 	IS_RESPONSIBLE     BIT DEFAULT false NOT NULL,
 	PRIMARY KEY (CONN_ID, REF_ID, DFA_WORKFLOW_ID, CONSTRAINT_ID),
-	CONSTRAINT FOREIGN KEY (DFA_WORKFLOW_ID) REFERENCES DFA_WORKFLOW (DFA_WORKFLOW_ID),
-	CONSTRAINT FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
-	CONSTRAINT CHECK (ALLOW_UPDATE = true OR IS_RESPONSIBLE = false),
+	CONSTRAINT fk_tmp_dfa_constraint_workflow_id FOREIGN KEY (DFA_WORKFLOW_ID) REFERENCES DFA_WORKFLOW (DFA_WORKFLOW_ID),
+	CONSTRAINT fk_tmp_dfa_constraint_constraint_id FOREIGN KEY (CONSTRAINT_ID) REFERENCES LKUP_CONSTRAINT (CONSTRAINT_ID),
+	CONSTRAINT responsible_only_when_updatable CHECK (ALLOW_UPDATE = true OR IS_RESPONSIBLE = false),
 	CONSTRAINT CHECK (CONSTRAINT_ID <> 0) -- 0 means nobody or disabled.
 )
 COLLATE='utf8_general_ci'
@@ -1060,6 +1144,10 @@ grant select,insert,update,delete on tmp_dfa_constraint to dfa_admin;
 
 delimiter GO
 CREATE TRIGGER tmp_dfa_constraint_before_insert BEFORE INSERT ON tmp_dfa_constraint FOR EACH ROW BEGIN
+/*
+Trigger to set CONN_ID to the current database connection ID.  This is the 'magic' that
+makes the per-connection id views work.
+*/
 	SET NEW.CONN_ID = CONNECTION_ID();
 END GO
 delimiter ;
@@ -1075,6 +1163,11 @@ grant select,insert,update,delete on session_dfa_constraint to dfa_user;
 	
 delimiter GO
 CREATE TRIGGER DFA_WORKFLOW_STATE_AFTER_INSERT AFTER INSERT ON DFA_WORKFLOW_STATE FOR EACH ROW BEGIN
+/*
+This trigger adds any created states to ref_dfa_workflow_state.  This is so that the
+application that uses this framework may do any additional application defined
+processing (such as associating workflows and/or states to binding tables).
+*/
 	IF (@dfa_act_state_ref_id >= 0) THEN
 		insert into ref_dfa_workflow_state (REF_ID, DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
 		VALUES (@dfa_act_state_ref_id, NEW.DFA_WORKFLOW_ID, NEW.DFA_STATE_ID, 1);
