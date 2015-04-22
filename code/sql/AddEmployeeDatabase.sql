@@ -139,6 +139,46 @@ COMMENT='Binding table between employee prospects and the workflows.'
 
 grant select,update,delete,insert ON EMPLOYEE_PROSPECT_WORKFLOW to demo_employee_user;
 
+drop procedure if exists demo_employee.sp_findEmployeeWorkflows;
+delimiter GO
+create procedure demo_employee.sp_findEmployeeWorkflows(employeeId BIGINT UNSIGNED
+	, workflowId BIGINT UNSIGNED
+	, workflowTyp INT
+   , likeLastNm VARCHAR(64)
+   , likeFirstNm VARCHAR(64)
+	, likeMiddleNm VARCHAR(64)
+   , likeStreetNm VARCHAR(64)
+   , likeCityNm VARCHAR(64)
+   , stateId SMALLINT UNSIGNED
+   , phoneNum VARCHAR(20)
+   , likeEmailAddr VARCHAR(64))
+BEGIN
+	CALL dfa.sp_cleanupSessionData();
+
+	INSERT INTO session_dfa_workflow_state
+	(DFA_WORKFLOW_ID, DFA_STATE_ID)
+	SELECT epw.DFA_WORKFLOW_ID, 1 
+	FROM EMPLOYEE_PROSPECT_WORKFLOW epw
+	JOIN EMPLOYEE_PROSPECT ON EMPLOYEE_PROSPECT.EMPLOYEE_ID = epw.EMPLOYEE_ID
+	WHERE (epw.DFA_WORKFLOW_ID = workflowId OR workflowId IS NULL)
+	  AND (epw.EMPLOYEE_ID = employeeId OR employeeId IS NULL)
+	  AND (EMPLOYEE_PROSPECT.LAST_NM like likeLastNm OR likeLastNm IS NULL)
+	  AND (EMPLOYEE_PROSPECT.FIRST_NM like likeFirstNm OR likeFirstNm IS NULL)
+	  AND (EMPLOYEE_PROSPECT.MIDDLE_NM like likeMiddleNm OR likeMiddleNm IS NULL)
+	  AND (EMPLOYEE_PROSPECT.STREET_NM like likeStreetNm OR likeStreetNm IS NULL)
+	  AND (EMPLOYEE_PROSPECT.CITY_NM like likeCityNm OR likeCityNm IS NULL)
+	  AND (EMPLOYEE_PROSPECT.STATE_ID = stateId OR stateId IS NULL)
+	  AND (EMPLOYEE_PROSPECT.PHONE_NUM like phoneNum OR phoneNum IS NULL)
+	  AND (EMPLOYEE_PROSPECT.EMAIL_ADDR like likeEmailAddr OR likeEmailAddr IS NULL);
+
+	CALL dfa.sp_processValidConstraints(2, NULL); 
+
+END GO
+delimiter ;
+
+grant EXECUTE ON PROCEDURE demo_employee.sp_findEmployeeWorkflows to demo_employee_user;
+
+
 drop procedure if exists demo_employee.sp_processWorkflowEvent;
 delimiter GO
 create procedure demo_employee.sp_processWorkflowEvent(employeeId BIGINT UNSIGNED
