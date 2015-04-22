@@ -38,7 +38,7 @@ state_name varchar(32) not null comment 'State name with first letter capital',
 state_abbr char(2)  NOT NULL comment 'Optional state abbreviation (US is 2 capital letters)',
 primary key (state_id),
 index(state_abbr),
-index(state_abbr)
+index(state_name)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -112,8 +112,14 @@ CREATE TABLE EMPLOYEE_PROSPECT (
     STATE_ID SMALLINT UNSIGNED NULL,
     PHONE_NUM VARCHAR(20) NULL,
     EMAIL_ADDR VARCHAR(64) NULL,
+    SALARY NUMERIC(12,2) NULL,
     CONSTRAINT NEED_PHONE_OR_EMAIL CHECK (PHONE_NUM IS NOT NULL OR EMAIL_ADDR IS NOT NULL),
-    CONSTRAINT FK_STATE FOREIGN KEY (STATE_ID) REFERENCES LKUP_STATE(STATE_ID)
+    CONSTRAINT FK_STATE FOREIGN KEY (STATE_ID) REFERENCES LKUP_STATE(STATE_ID),
+    index(LAST_NM,FIRST_NM),
+    index(FIRST_NM),
+    index(STREET_NM),
+    index(EMAIL_ADDR),
+    index(PHONE_NUM)
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -130,7 +136,7 @@ CREATE TABLE EMPLOYEE_PROSPECT_WORKFLOW (
     PRIMARY KEY (EMPLOYEE_ID,DFA_WORKFLOW_ID),
     CONSTRAINT FK_EMPLOYEE_PROSPECT_WORKFLOW_EMPLOYEE FOREIGN KEY (EMPLOYEE_ID) REFERENCES EMPLOYEE_PROSPECT (EMPLOYEE_ID),
     CONSTRAINT FK_EMPLOYEE_PROSPECT_WORKFLOW_DFA_WORKFLOW FOREIGN KEY (DFA_WORKFLOW_ID) REFERENCES dfa.DFA_WORKFLOW (DFA_WORKFLOW_ID),
-    UNIQUE (DFA_WORKFLOW_ID)
+    UNIQUE (DFA_WORKFLOW_ID) -- Cardinality is 1 employee to many workflows.
 )
 COLLATE='utf8_general_ci'
 ENGINE=InnoDB
@@ -138,6 +144,8 @@ COMMENT='Binding table between employee prospects and the workflows.'
 ;
 
 grant select,update,delete,insert ON EMPLOYEE_PROSPECT_WORKFLOW to demo_employee_user;
+
+use dfa;
 
 drop procedure if exists demo_employee.sp_findEmployeeWorkflows;
 delimiter GO
@@ -151,16 +159,34 @@ create procedure demo_employee.sp_findEmployeeWorkflows(employeeId BIGINT UNSIGN
    , likeCityNm VARCHAR(64)
    , stateId SMALLINT UNSIGNED
    , phoneNum VARCHAR(20)
-   , likeEmailAddr VARCHAR(64))
+   , likeEmailAddr VARCHAR(64)
+   , active BIT
+   , includeSubState BIT)
 BEGIN
-	CALL dfa.sp_cleanupSessionData();
+	IF (includeSubState IS NULL) THEN
+		SET includeSubState = FALSE;
+    END IF;
+
+	CALL sp_cleanupSessionData();
 
 	INSERT INTO session_dfa_workflow_state
 	(DFA_WORKFLOW_ID, DFA_STATE_ID)
 	SELECT epw.DFA_WORKFLOW_ID, 1 
-	FROM EMPLOYEE_PROSPECT_WORKFLOW epw
-	JOIN EMPLOYEE_PROSPECT ON EMPLOYEE_PROSPECT.EMPLOYEE_ID = epw.EMPLOYEE_ID
-	WHERE (epw.DFA_WORKFLOW_ID = workflowId OR workflowId IS NULL)
+	FROM demo_employee.EMPLOYEE_PROSPECT_WORKFLOW epw
+	JOIN demo_employee.EMPLOYEE_PROSPECT EMPLOYEE_PROSPECT 
+		ON EMPLOYEE_PROSPECT.EMPLOYEE_ID = epw.EMPLOYEE_ID
+    -- Below left joins are to only bring in these tables if the corresponding
+    -- search criteria are specified.
+    LEFT JOIN DFA_WORKFLOW ON (workflowId IS NOT NULL OR includeSubState = TRUE) 
+		AND DFA_WORKFLOW.DFA_WORKFLOW_ID = epw.WORKFLOW_ID
+	LEFT JOIN DFA_WORKFLOW_STATE ON active IS NOT NULL 
+		AND DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = epw.DFA_WORKFLOW_ID
+		AND DFA_WORKFLOW_STATE.IS_CURRENT = 1
+	LEFT JOIN dfa.LKUP_STATE LKUP_STATE ON active IS NOT NULL 
+		AND LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP 
+	WHERE (epw.DFA_WORKFLOW_ID = workflowId OR 
+			(includeSubState AND DFA_WORKFLOW.SPAWN_DFA_WORKFLOW_ID = workflowId) 
+		OR workflowId IS NULL)
 	  AND (epw.EMPLOYEE_ID = employeeId OR employeeId IS NULL)
 	  AND (EMPLOYEE_PROSPECT.LAST_NM like likeLastNm OR likeLastNm IS NULL)
 	  AND (EMPLOYEE_PROSPECT.FIRST_NM like likeFirstNm OR likeFirstNm IS NULL)
@@ -169,12 +195,21 @@ BEGIN
 	  AND (EMPLOYEE_PROSPECT.CITY_NM like likeCityNm OR likeCityNm IS NULL)
 	  AND (EMPLOYEE_PROSPECT.STATE_ID = stateId OR stateId IS NULL)
 	  AND (EMPLOYEE_PROSPECT.PHONE_NUM like phoneNum OR phoneNum IS NULL)
-	  AND (EMPLOYEE_PROSPECT.EMAIL_ADDR like likeEmailAddr OR likeEmailAddr IS NULL);
+	  AND (EMPLOYEE_PROSPECT.EMAIL_ADDR like likeEmailAddr OR likeEmailAddr IS NULL)
+      AND (includeSubState OR DFA_WORKFLOW.SUB_STATE = FALSE)
+      AND (workflowTyp IS NULL OR DFA_WORKFLOW.WORKFLOW_TYP = workflowTyp)
+      AND (active IS NULL OR LKUP_STATE.ACTIVE = 1);
 
-	CALL dfa.sp_processValidConstraints(2, NULL); 
+	CALL sp_processValidConstraints(2, NULL); 
+    
+    -- Bring back the data for the application.
+    SELECT * FROM session_dfa_workflow_state sdws JOIN DFA_WORKFLOW ON sdws.WORKFLOW_ID = DFA_WORKFLOW.WORKFLOW_ID;
+		
 
 END GO
 delimiter ;
+
+use demo_employee;
 
 grant EXECUTE ON PROCEDURE demo_employee.sp_findEmployeeWorkflows to demo_employee_user;
 
@@ -196,7 +231,7 @@ BEGIN
     -- Insert any newly created workflows.
 	insert into EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
     select employeeId,sdwo.DFA_WORKFLOW_ID,modBy
-    from session_dfa_workflow_out sdwo LEFT JOIN EMPLOYEE_PROSPECT_WORKFLOW epw ON epw.EMPLOYEE_ID = employeeId and epw.DFA_WORKFLOW_ID = sdwo.DFA_WORKFLOW_ID
+    from dfa.session_dfa_workflow_out sdwo LEFT JOIN EMPLOYEE_PROSPECT_WORKFLOW epw ON epw.EMPLOYEE_ID = employeeId and epw.DFA_WORKFLOW_ID = sdwo.DFA_WORKFLOW_ID
     where OUTPUT=1 AND epw.EMPLOYEE_ID IS NULL;
 END GO
 delimiter ;
@@ -219,7 +254,7 @@ BEGIN
 -- Also insert any other records created.
 	insert into EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
     select employeeId,sdwo.DFA_WORKFLOW_ID,modBy
-    from session_dfa_workflow_out sdwo LEFT JOIN EMPLOYEE_PROSPECT_WORKFLOW epw ON epw.EMPLOYEE_ID = employeeId and epw.DFA_WORKFLOW_ID = sdwo.DFA_WORKFLOW_ID
+    from dfa.session_dfa_workflow_out sdwo LEFT JOIN EMPLOYEE_PROSPECT_WORKFLOW epw ON epw.EMPLOYEE_ID = employeeId and epw.DFA_WORKFLOW_ID = sdwo.DFA_WORKFLOW_ID
     where OUTPUT=1 AND epw.EMPLOYEE_ID IS NULL AND sdwo.DFA_WORKFLOW_ID <> dfaWorkflowId;
 END GO
 delimiter ;
