@@ -112,6 +112,7 @@ CREATE TABLE EMPLOYEE_PROSPECT (
     STATE_ID SMALLINT UNSIGNED NULL,
     PHONE_NUM VARCHAR(20) NULL,
     EMAIL_ADDR VARCHAR(64) NULL,
+    POSITION VARCHAR(32) NULL,
     SALARY NUMERIC(12,2) NULL,
     CONSTRAINT NEED_PHONE_OR_EMAIL CHECK (PHONE_NUM IS NOT NULL OR EMAIL_ADDR IS NOT NULL),
     CONSTRAINT FK_STATE FOREIGN KEY (STATE_ID) REFERENCES LKUP_STATE(STATE_ID),
@@ -145,13 +146,23 @@ COMMENT='Binding table between employee prospects and the workflows.'
 
 grant select,update,delete,insert ON EMPLOYEE_PROSPECT_WORKFLOW to demo_employee_user;
 
-use dfa;
+
+drop procedure if exists demo_employee.initDfaFramework;
+delimiter GO
+create procedure demo_employee.initDfaFramework() BEGIN
+	CALL dfa.sp_configureForApplication(1000, 0, NULL, NULL);
+	CALL dfa.sp_cleanupSessionDataAndRoles();
+END GO
+delimiter ;
+
+grant EXECUTE ON PROCEDURE demo_employee.initDfaFramework to demo_employee_user;
 
 drop procedure if exists demo_employee.sp_findEmployeeWorkflows;
 delimiter GO
 create procedure demo_employee.sp_findEmployeeWorkflows(employeeId BIGINT UNSIGNED
 	, workflowId BIGINT UNSIGNED
 	, workflowTyp INT
+   , active BIT
    , likeLastNm VARCHAR(64)
    , likeFirstNm VARCHAR(64)
 	, likeMiddleNm VARCHAR(64)
@@ -160,16 +171,16 @@ create procedure demo_employee.sp_findEmployeeWorkflows(employeeId BIGINT UNSIGN
    , stateId SMALLINT UNSIGNED
    , phoneNum VARCHAR(20)
    , likeEmailAddr VARCHAR(64)
-   , active BIT
    , includeSubState BIT)
+MODIFIES SQL DATA
 BEGIN
 	IF (includeSubState IS NULL) THEN
 		SET includeSubState = FALSE;
     END IF;
 
-	CALL sp_cleanupSessionData();
+	CALL demo_employee.initDfaFramework();
 
-	INSERT INTO session_dfa_workflow_state
+	INSERT INTO dfa.session_dfa_workflow_state
 	(DFA_WORKFLOW_ID, DFA_STATE_ID)
 	SELECT epw.DFA_WORKFLOW_ID, 1 
 	FROM demo_employee.EMPLOYEE_PROSPECT_WORKFLOW epw
@@ -177,9 +188,9 @@ BEGIN
 		ON EMPLOYEE_PROSPECT.EMPLOYEE_ID = epw.EMPLOYEE_ID
     -- Below left joins are to only bring in these tables if the corresponding
     -- search criteria are specified.
-    LEFT JOIN DFA_WORKFLOW ON (workflowId IS NOT NULL OR includeSubState = TRUE) 
-		AND DFA_WORKFLOW.DFA_WORKFLOW_ID = epw.WORKFLOW_ID
-	LEFT JOIN DFA_WORKFLOW_STATE ON active IS NOT NULL 
+    LEFT JOIN dfa.DFA_WORKFLOW DFA_WORKFLOW ON (workflowId IS NOT NULL OR includeSubState = TRUE) 
+		AND DFA_WORKFLOW.DFA_WORKFLOW_ID = epw.DFA_WORKFLOW_ID
+	LEFT JOIN dfa.DFA_WORKFLOW_STATE DFA_WORKFLOW_STATE ON active IS NOT NULL 
 		AND DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = epw.DFA_WORKFLOW_ID
 		AND DFA_WORKFLOW_STATE.IS_CURRENT = 1
 	LEFT JOIN dfa.LKUP_STATE LKUP_STATE ON active IS NOT NULL 
@@ -187,6 +198,9 @@ BEGIN
 	WHERE (epw.DFA_WORKFLOW_ID = workflowId OR 
 			(includeSubState AND DFA_WORKFLOW.SPAWN_DFA_WORKFLOW_ID = workflowId) 
 		OR workflowId IS NULL)
+      AND (includeSubState OR DFA_WORKFLOW.SUB_STATE = FALSE)
+      AND (workflowTyp IS NULL OR DFA_WORKFLOW.WORKFLOW_TYP = workflowTyp)
+      AND (LKUP_STATE.ACTIVE IS NULL OR LKUP_STATE.ACTIVE = active)
 	  AND (epw.EMPLOYEE_ID = employeeId OR employeeId IS NULL)
 	  AND (EMPLOYEE_PROSPECT.LAST_NM like likeLastNm OR likeLastNm IS NULL)
 	  AND (EMPLOYEE_PROSPECT.FIRST_NM like likeFirstNm OR likeFirstNm IS NULL)
@@ -196,27 +210,36 @@ BEGIN
 	  AND (EMPLOYEE_PROSPECT.STATE_ID = stateId OR stateId IS NULL)
 	  AND (EMPLOYEE_PROSPECT.PHONE_NUM like phoneNum OR phoneNum IS NULL)
 	  AND (EMPLOYEE_PROSPECT.EMAIL_ADDR like likeEmailAddr OR likeEmailAddr IS NULL)
-      AND (includeSubState OR DFA_WORKFLOW.SUB_STATE = FALSE)
-      AND (workflowTyp IS NULL OR DFA_WORKFLOW.WORKFLOW_TYP = workflowTyp)
-      AND (active IS NULL OR LKUP_STATE.ACTIVE = 1);
+      ;
 
-	CALL sp_processValidConstraints(2, NULL); 
+	CALL dfa.sp_processValidConstraints(1000, NULL); 
     
     -- Bring back the data for the application.
-    SELECT * FROM session_dfa_workflow_state sdws JOIN DFA_WORKFLOW ON sdws.DFA_WORKFLOW_ID = DFA_WORKFLOW.DFA_WORKFLOW_ID
-    	join DFA_WORKFLOW_STATE ON DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = DFA_WORKFLOW.DFA_WORKFLOW_ID
-    	JOIN LKUP_STATE ON LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
-    	JOIN LKUP_EVENT ON LKUP_EVENT.EVENT_TYP = DFA_WORKFLOW_STATE.EVENT_TYP
-    	JOIN LKUP_WORKFLOW_TYP ON LKUP_WORKFLOW_TYP.WORKFLOW_TYP;
+    SELECT EMPLOYEE_PROSPECT.POSITION, EMPLOYEE_PROSPECT.LAST_NM, EMPLOYEE_PROSPECT.FIRST_NM, EMP_LKUP_STATE.state_abbr, LKUP_STATE.ACTIVE, LKUP_WORKFLOW_TYP.WORKFLOW_TX, LKUP_EVENT.EVENT_TX, LKUP_STATE.STATE_TX, IFNULL(EXPECTED_TRANS.EVENT_TX, EXPECTED_EVENT.EVENT_TX) as EXPECTED_NEXT_EVENT_TX
+    FROM dfa.session_dfa_workflow_state sdws JOIN dfa.DFA_WORKFLOW DFA_WORKFLOW ON sdws.DFA_WORKFLOW_ID = DFA_WORKFLOW.DFA_WORKFLOW_ID
+    	join dfa.DFA_WORKFLOW_STATE DFA_WORKFLOW_STATE ON DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = sdws.DFA_WORKFLOW_ID
+    	JOIN dfa.LKUP_STATE LKUP_STATE ON LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
+    	JOIN dfa.LKUP_EVENT LKUP_EVENT ON LKUP_EVENT.EVENT_TYP = DFA_WORKFLOW_STATE.EVENT_TYP
+    	JOIN dfa.LKUP_WORKFLOW_TYP LKUP_WORKFLOW_TYP ON LKUP_WORKFLOW_TYP.WORKFLOW_TYP = DFA_WORKFLOW.WORKFLOW_TYP
+        JOIN demo_employee.EMPLOYEE_PROSPECT_WORKFLOW EMPLOYEE_PROSPECT_WORKFLOW ON EMPLOYEE_PROSPECT_WORKFLOW.DFA_WORKFLOW_ID = sdws.DFA_WORKFLOW_ID
+        JOIN demo_employee.EMPLOYEE_PROSPECT EMPLOYEE_PROSPECT ON EMPLOYEE_PROSPECT.EMPLOYEE_ID = EMPLOYEE_PROSPECT_WORKFLOW.EMPLOYEE_ID
+		LEFT JOIN demo_employee.LKUP_STATE EMP_LKUP_STATE ON EMP_LKUP_STATE.state_id = EMPLOYEE_PROSPECT.STATE_ID
+-- Required: SHOW access for workflow type and workflow state.
+		JOIN dfa.session_dfa_constraint workflow_constraint ON workflow_constraint.DFA_WORKFLOW_ID = sdws.DFA_WORKFLOW_ID
+			AND workflow_constraint.CONSTRAINT_ID = LKUP_WORKFLOW_TYP.CONSTRAINT_ID
+		JOIN dfa.session_dfa_constraint state_constraint ON state_constraint.DFA_WORKFLOW_ID = sdws.DFA_WORKFLOW_ID
+			AND state_constraint.CONSTRAINT_ID = LKUP_STATE.CONSTRAINT_ID
+
+        LEFT JOIN dfa.LKUP_EVENT EXPECTED_EVENT ON LKUP_STATE.EXPECTED_NEXT_EVENT = EXPECTED_EVENT.EVENT_TYP
+        LEFT JOIN dfa.LKUP_EVENT_STATE_TRANS EXPECTED_TRANS ON EXPECTED_TRANS.STATE_TYP = LKUP_STATE.STATE_TYP
+			AND EXPECTED_TRANS.EVENT_TYP = LKUP_STATE.EXPECTED_NEXT_EVENT
+	WHERE DFA_WORKFLOW_STATE.IS_CURRENT = 1;
 		
 
 END GO
 delimiter ;
 
-use demo_employee;
-
 grant EXECUTE ON PROCEDURE demo_employee.sp_findEmployeeWorkflows to demo_employee_user;
-
 
 drop procedure if exists demo_employee.sp_processWorkflowEvent;
 delimiter GO
@@ -230,7 +253,7 @@ create procedure demo_employee.sp_processWorkflowEvent(employeeId BIGINT UNSIGNE
 	, dfaStateId MEDIUMINT/* Optional - may be null */) 
 	MODIFIES SQL DATA
 BEGIN
-	CALL dfa.sp_cleanupSessionData();
+	CALL demo_employee.initDfaFramework();
 	CALL dfa.sp_processWorkflowEvent(workflowId, eventTyp, commentTx, modBy, raiseError, refId, dfaStateId);
     -- Insert any newly created workflows.
 	insert into EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
@@ -244,11 +267,10 @@ grant EXECUTE ON PROCEDURE demo_employee.sp_processWorkflowEvent to demo_employe
 
 DROP PROCEDURE IF EXISTS demo_employee.sp_startWorkflow;
 delimiter GO
-CREATE PROCEDURE demo_employee.sp_startWorkflow(employeeId BIGINT UNSIGNED, workflowTyp INT, commentTx MEDIUMTEXT, modBy VARCHAR(32), raiseError BIT) 
+CREATE PROCEDURE demo_employee.sp_startWorkflow(employeeId BIGINT UNSIGNED, workflowTyp INT, commentTx MEDIUMTEXT, modBy VARCHAR(32), raiseError BIT, OUT dfaWorkflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA
 BEGIN
-	declare dfaWorkflowId BIGINT UNSIGNED DEFAULT NULL;
-	CALL dfa.sp_cleanupSessionData();
+	CALL demo_employee.initDfaFramework();
 	CALL dfa.sp_do_startWorkflow(workflowTyp, commentTx, modBy, raiseError, 0, NULL, NULL, FALSE, dfaWorkflowId);
 
 -- Insert the newly created employee record.

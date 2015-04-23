@@ -15,10 +15,34 @@ ROLLBACK statement.
 
 START TRANSACTION;
 -- This is where the application will insert the user's roles.
-CALL dfa.sp_configureForApplication(1000, 0, NULL, NULL);
+INSERT INTO `demo_employee`.`EMPLOYEE_PROSPECT`
+(`LAST_NM`,
+`FIRST_NM`,
+`MIDDLE_NM`,
+`STREET_NM`,
+`CITY_NM`,
+`STATE_ID`,
+`PHONE_NUM`,
+`EMAIL_ADDR`,
+`POSITION`,
+`SALARY`)
+VALUES
+('Person',
+'Test',
+'Tester',
+'123 Unit Test Way',
+'Test',
+10,
+'+11234567890',
+'test.person@mytestway.com',
+'Software Tester',
+40000);
+
+set @employeeId = last_insert_id();
+
 CALL dfa.sp_cleanupSessionDataAndRoles();
 insert into session_user_role (ROLE_NM) VALUES ('USER');
-CALL dfa.sp_startWorkflow(1000, 'Unit Test - Start Workflow', 'Employee UT', 1, @utDfaWorkflowId);
+CALL demo_employee.sp_startWorkflow(@employeeId, 1000, 'Unit Test - Start Workflow', 'Employee UT', 1, @utDfaWorkflowId);
 
 select CASE WHEN DFA_WORKFLOW.WORKFLOW_TYP = 1000 THEN 'PASS' ELSE '1 FAIL - Workflow Typ' END
 	from DFA_WORKFLOW WHERE DFA_WORKFLOW.DFA_WORKFLOW_ID = @utDfaWorkflowId
@@ -44,8 +68,6 @@ UNION select CASE WHEN count(*) = 2 THEN 'PASS'
     from ref_dfa_constraint WHERE DFA_WORKFLOW_ID = @utDfaWorkflowId AND REF_ID=1 and CONSTRAINT_ID IN (1,2)
 ;
 
-CALL dfa.sp_cleanupSessionData();
-
 /*
 dfa.sp_processWorkflowEvent(workflowId BIGINT UNSIGNED
 	, eventTyp INT
@@ -56,7 +78,7 @@ dfa.sp_processWorkflowEvent(workflowId BIGINT UNSIGNED
 	, dfaStateId MEDIUMINT Optional - may be null)
 */
 
-CALL dfa.sp_processWorkflowEvent(@utDfaWorkflowId, 1000, 'Test expected event', 'Employee UT', 1, 0, 1);
+CALL demo_employee.sp_processWorkflowEvent(@employeeId, @utDfaWorkflowId, 1000, 'Test expected event', 'Employee UT', 1, 0, 1);
 
 select CASE WHEN DFA_WORKFLOW.WORKFLOW_TYP = 1000 THEN 'PASS' ELSE '2 FAIL - Workflow Typ' END
 	from DFA_WORKFLOW WHERE DFA_WORKFLOW.DFA_WORKFLOW_ID = @utDfaWorkflowId
@@ -86,8 +108,7 @@ UNION select CASE WHEN count(*) = 3 THEN 'PASS'
     from ref_dfa_constraint WHERE DFA_WORKFLOW_ID = @utDfaWorkflowId AND REF_ID=1 and CONSTRAINT_ID IN (1,2,3)
 ;
 
-CALL dfa.sp_cleanupSessionData();
-CALL dfa.sp_processWorkflowEvent(@utDfaWorkflowId, 1003, 'Test expected event', 'Employee UT', 1, 0, 2);
+CALL demo_employee.sp_processWorkflowEvent(@employeeId, @utDfaWorkflowId, 1003, 'Test expected event', 'Employee UT', 1, 0, 2);
 
 select CASE WHEN DFA_WORKFLOW.WORKFLOW_TYP = 1000 THEN 'PASS' ELSE '3 FAIL - Workflow Typ' END
 	from DFA_WORKFLOW WHERE DFA_WORKFLOW.DFA_WORKFLOW_ID = @utDfaWorkflowId
@@ -117,8 +138,11 @@ UNION select CASE WHEN count(*) = 3 THEN 'PASS'
     from ref_dfa_constraint WHERE DFA_WORKFLOW_ID = @utDfaWorkflowId AND REF_ID=1 and CONSTRAINT_ID IN (1,2,3)
 ;
 
-CALL dfa.sp_cleanupSessionData();
-CALL dfa.sp_processWorkflowEvent(@utDfaWorkflowId, 1005, 'Test expected event', 'Employee UT', 1, 0, 3);
+CALL demo_employee.sp_findEmployeeWorkflows(@employeeId, @utDfaWorkflowId, NULL, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+CALL dfa.sp_selectWorkflowStates(@utDfaWorkflowId);
+CALL dfa.sp_selectWorkflowEvents(@utDfaWorkflowId);
+
+CALL demo_employee.sp_processWorkflowEvent(@employeeId, @utDfaWorkflowId, 1005, 'Test expected event', 'Employee UT', 1, 0, 3);
 
 select CASE WHEN DFA_WORKFLOW.WORKFLOW_TYP = 1000 THEN 'PASS' ELSE '4 FAIL - Workflow Typ' END
 	from DFA_WORKFLOW WHERE DFA_WORKFLOW.DFA_WORKFLOW_ID = @utDfaWorkflowId
@@ -147,5 +171,8 @@ UNION select CASE WHEN count(*) = 3 THEN 'PASS'
 	ELSE concat('4 Missing constraint type 1, 2, or 3') END
     from ref_dfa_constraint WHERE DFA_WORKFLOW_ID = @utDfaWorkflowId AND REF_ID=1 and CONSTRAINT_ID IN (1,2,3)
 ;
+
+CALL demo_employee.sp_findEmployeeWorkflows(@employeeId, @utDfaWorkflowId, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+CALL dfa.sp_selectWorkflowEvents(@utDfaWorkflowId);
 
 ROLLBACK;

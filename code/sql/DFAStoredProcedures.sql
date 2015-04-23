@@ -307,12 +307,22 @@ delimiter GO
 CREATE PROCEDURE dfa.sp_processAppDataConstraints(dfaWorkflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA
 BEGIN
+declare noWorkflowInState BIT default false;
+set noWorkflowInState = dfaWorkflowId IS NOT NULL AND NOT EXISTS (select * from session_dfa_workflow_state where DFA_WORKFLOW_ID = dfaWorkflowId);
 
+if (noWorkflowInState) THEN
+	insert into session_dfa_workflow_state (DFA_WORKFLOW_ID, DFA_STATE_ID) VALUES (dfaWorkflowId, 1);
+END IF;
+    
 CALL dfa.sp_processValidConstraints(1, dfaWorkflowId);
 
 IF (@dfa_user_application_id IS NOT NULL) THEN
 	CALL dfa.sp_execUntrustedApplicationDataProc(dfaWorkflowId);
 	CALL dfa.sp_processValidConstraints(@dfa_user_application_id, dfaWorkflowId);
+END IF;
+
+if (noWorkflowInState) THEN
+	delete from session_dfa_workflow_state where DFA_WORKFLOW_ID = dfaWorkflowId and DFA_STATE_ID=1;
 END IF;
 
 END GO
@@ -669,6 +679,93 @@ END GO
 delimiter ;
 
 grant EXECUTE ON PROCEDURE dfa.sp_processWorkflowEvent to dfa_user;
+
+drop procedure if exists dfa.sp_selectWorkflowStates;
+delimiter GO
+create procedure dfa.sp_selectWorkflowStates(dfaWorkflowId BIGINT UNSIGNED) 
+	MODIFIES SQL DATA
+BEGIN
+	CALL dfa.sp_processAppDataConstraints(dfaWorkflowId);
+
+	SELECT dws.DFA_WORKFLOW_ID, dws.DFA_STATE_ID, dws.IS_CURRENT, dws.IS_PASSIVE, dws.COMMENT_TX, dws.MOD_BY, dws.MOD_DT 
+		, le.EVENT_TX, le.ATTENTION as EVENT_ATTENTION, ls.STATE_TX, ls.ATTENTION as STATE_ATTENTION
+    FROM DFA_WORKFLOW_STATE dws JOIN LKUP_EVENT le ON le.EVENT_TYP = dws.EVENT_TYP
+    JOIN LKUP_STATE ls ON ls.STATE_TYP = dws.STATE_TYP
+    JOIN session_dfa_constraint sdc ON sdc.DFA_WORKFLOW_ID = dws.DFA_WORKFLOW_ID AND ls.CONSTRAINT_ID = sdc.CONSTRAINT_ID
+    WHERE dws.DFA_WORKFLOW_ID = dfaWorkflowId 
+    ORDER BY dws.IS_CURRENT desc, dws.DFA_STATE_ID desc;
+
+END GO
+delimiter ;
+
+drop procedure if exists dfa.sp_selectWorkflowEvents;
+delimiter GO
+create procedure dfa.sp_selectWorkflowEvents(dfaWorkflowId BIGINT UNSIGNED) 
+	MODIFIES SQL DATA
+BEGIN
+    declare stateTyp INT;
+    declare eventTyp INT;
+    declare eventTx VARCHAR(60);
+    declare constraintId INT;
+    declare altStateTyp INT;
+	declare sortOrder INT;
+    declare nextStateTyp INT;
+    declare isStatePseudo BIT; -- for OUT parameter that we ignore.
+   
+    declare cursor_done BIT default false;
+    
+    DECLARE next_events CURSOR FOR SELECT lest.EVENT_TYP, IFNULL(lest.EVENT_TX, le.EVENT_TX) AS EVENT_TX, lssdc.CONSTRAINT_ID, ls.ALT_STATE_TYP, IFNULL(lest.SORT_ORDER, le.SORT_ORDER), lest.NEXT_STATE_TYP
+	FROM LKUP_EVENT_STATE_TRANS lest join LKUP_EVENT le ON le.EVENT_TYP = lest.EVENT_TYP
+    JOIN session_dfa_constraint lestsdc ON lestsdc.CONSTRAINT_ID = lest.CONSTRAINT_ID AND lestsdc.DFA_WORKFLOW_ID = dfaWorkflowId
+    JOIN LKUP_STATE ls ON lest.NEXT_STATE_TYP = ls.STATE_TYP
+    LEFT JOIN session_dfa_constraint lssdc ON lssdc.CONSTRAINT_ID = ls.CONSTRAINT_ID AND lssdc.ALLOW_UPDATE=1
+    WHERE lestsdc.ALLOW_UPDATE = 1 AND lest.STATE_TYP = stateTyp
+		AND (ls.ALT_STATE_TYP IS NOT NULL OR lssdc.CONSTRAINT_ID IS NOT NULL);
+
+	DECLARE CONTINUE HANDLER FOR NOT FOUND SET cursor_done = TRUE;
+
+    select STATE_TYP into stateTyp from DFA_WORKFLOW_STATE
+		where DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = dfaWorkflowId AND IS_CURRENT = 1;
+
+	CALL dfa.sp_processAppDataConstraints(dfaWorkflowId);
+
+	CREATE OR REPLACE TEMPORARY TABLE SELECTED_EVENTS (
+		EVENT_TYP INT NOT NULL PRIMARY KEY,
+        EVENT_TX VARCHAR(60) NOT NULL,
+        SORT_ORDER INT NOT NULL,
+        -- For ORDER BY clause.
+        INDEX (SORT_ORDER,EVENT_TX)
+    )
+    COLLATE='utf8_general_ci'
+	ENGINE=InnoDB
+	;
+
+	OPEN next_events;
+	
+	read_loop: LOOP
+      FETCH next_events into eventTyp, eventTx, constraintId, altStateTyp, sortOrder, nextStateTyp;
+      IF cursor_done THEN
+		  close next_events;
+        LEAVE read_loop;
+      END IF;
+      IF constraintId IS NOT NULL then
+		insert into SELECTED_EVENTS (EVENT_TYP,EVENT_TX,SORT_ORDER) VALUES (eventTyp, eventTx, sortOrder);
+      ELSEIF altStateTyp IS NOT NULL THEN
+		set altStateTyp = NULL;
+      	CALL dfa.sp_findNextValidState(workflowId, nextStateTyp, 0, altStateTyp, isStatePseudo);
+        IF (altStateTyp IS NOT NULL) then
+			insert into SELECTED_EVENTS (EVENT_TYP,EVENT_TX,SORT_ORDER) VALUES (eventTyp, eventTx, sortOrder);			
+        END IF;
+      END IF;
+	END LOOP;
+    
+    SELECT EVENT_TYP, EVENT_TX FROM SELECTED_EVENTS ORDER BY SORT_ORDER, EVENT_TX, EVENT_TYP;
+    
+	DROP TEMPORARY TABLE SELECTED_EVENTS;        
+END GO
+delimiter ;
+
+grant EXECUTE ON PROCEDURE dfa.sp_selectWorkflowEvents to dfa_viewer;
 
 flush PRIVILEGES;
 
