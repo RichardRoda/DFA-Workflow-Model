@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
  *
  * @author rodare
  */
-@RequestMapping("findWorkflows")
+@RequestMapping("/findWorkflows")
 @Controller
 public class FindDfaWorkflows {
     @RequestMapping(method=RequestMethod.GET)

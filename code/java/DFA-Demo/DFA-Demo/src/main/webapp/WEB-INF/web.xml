@@ -27,7 +27,7 @@
 
     <servlet-mapping>
         <servlet-name>mvc</servlet-name>
-        <url-pattern>/mvc/*</url-pattern>
+        <url-pattern>*.htm</url-pattern>
     </servlet-mapping>
 
     <listener>
