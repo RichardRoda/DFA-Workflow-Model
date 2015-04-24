@@ -1,0 +1,75 @@
+[INFO] Scanning for projects...
+[INFO]                                                                         
+[INFO] ------------------------------------------------------------------------
+[INFO] Building DFA-Demo 1.0-SNAPSHOT
+[INFO] ------------------------------------------------------------------------
+[INFO] 
+[INFO] --- maven-dependency-plugin:2.6:tree (default-cli) @ DFA-Demo ---
+[INFO] example.com:DFA-Demo:war:1.0-SNAPSHOT
+[INFO] +- javax:javaee-web-api:jar:7.0:provided
+[INFO] +- org.springframework:spring-context:jar:4.1.6.RELEASE:compile
+[INFO] |  +- org.springframework:spring-aop:jar:4.1.6.RELEASE:compile (version managed from 4.1.6.RELEASE)
+[INFO] |  |  \- aopalliance:aopalliance:jar:1.0:compile
+[INFO] |  +- org.springframework:spring-beans:jar:4.1.6.RELEASE:compile (version managed from 4.1.6.RELEASE)
+[INFO] |  +- org.springframework:spring-core:jar:4.1.6.RELEASE:compile (version managed from 4.1.6.RELEASE)
+[INFO] |  |  \- commons-logging:commons-logging:jar:1.0.4:provided (version managed from 1.2; scope managed from compile)
+[INFO] |  \- org.springframework:spring-expression:jar:4.1.6.RELEASE:compile (version managed from 4.1.6.RELEASE)
+[INFO] +- org.springframework:spring-web:jar:4.1.6.RELEASE:compile
+[INFO] +- org.springframework:spring-webmvc:jar:4.1.6.RELEASE:compile
+[INFO] +- org.springframework:spring-tx:jar:4.1.6.RELEASE:compile
+[INFO] +- org.springframework:spring-jdbc:jar:4.1.6.RELEASE:compile
+[INFO] +- displaytag:displaytag:jar:1.2:compile
+[INFO] |  +- commons-collections:commons-collections:jar:3.1:compile
+[INFO] |  +- commons-lang:commons-lang:jar:2.3:compile
+[INFO] |  +- com.lowagie:itext:jar:1.3:compile
+[INFO] |  +- commons-beanutils:commons-beanutils:jar:1.7.0:compile
+[INFO] |  \- org.slf4j:slf4j-log4j12:jar:1.4.2:compile
+[INFO] |     \- log4j:log4j:jar:1.2.17:provided (version managed from 1.2.13; scope managed from compile)
+[INFO] +- org.apache.tiles:tiles-jsp:jar:3.0.5:compile
+[INFO] |  \- org.apache.tiles:tiles-request-jsp:jar:1.0.6:compile
+[INFO] +- org.apache.tiles:tiles-core:jar:3.0.5:compile
+[INFO] |  +- commons-digester:commons-digester:jar:2.0:compile
+[INFO] |  \- org.slf4j:jcl-over-slf4j:jar:1.7.6:compile
+[INFO] +- org.apache.tiles:tiles-api:jar:3.0.5:compile
+[INFO] |  \- org.apache.tiles:tiles-request-api:jar:1.0.6:compile
+[INFO] +- org.apache.tiles:tiles-servlet:jar:3.0.5:compile
+[INFO] |  \- org.apache.tiles:tiles-request-servlet:jar:1.0.6:compile
+[INFO] +- org.apache.tiles:tiles-template:jar:3.0.5:compile
+[INFO] |  \- org.apache.tiles:tiles-autotag-core-runtime:jar:1.1.0:compile
+[INFO] +- org.apache.tiles:tiles-extras:jar:3.0.5:compile
+[INFO] |  +- org.apache.tiles:tiles-request-servlet-wildcard:jar:1.0.6:compile
+[INFO] |  +- org.apache.tiles:tiles-request-mustache:jar:1.0.6:compile
+[INFO] |  |  \- com.github.spullara.mustache.java:compiler:jar:0.8.4:compile
+[INFO] |  +- org.apache.tiles:tiles-freemarker:jar:3.0.5:compile
+[INFO] |  |  \- org.apache.tiles:tiles-request-freemarker:jar:1.0.6:compile
+[INFO] |  |     \- org.freemarker:freemarker:jar:2.3.15:compile
+[INFO] |  +- org.apache.tiles:tiles-velocity:jar:3.0.5:compile
+[INFO] |  |  +- org.apache.velocity:velocity-tools:jar:2.0:compile
+[INFO] |  |  |  +- oro:oro:jar:2.0.8:compile
+[INFO] |  |  |  \- org.apache.velocity:velocity:jar:1.6.2:compile
+[INFO] |  |  \- org.apache.tiles:tiles-request-velocity:jar:1.0.6:compile
+[INFO] |  +- org.apache.tiles:tiles-el:jar:3.0.5:compile
+[INFO] |  +- org.apache.tiles:tiles-mvel:jar:3.0.5:compile
+[INFO] |  |  \- org.mvel:mvel2:jar:2.0.11:compile
+[INFO] |  +- org.apache.tiles:tiles-ognl:jar:3.0.5:compile
+[INFO] |  |  \- ognl:ognl:jar:2.7.3:compile
+[INFO] |  |     \- jboss:javassist:jar:3.7.ga:compile
+[INFO] |  +- org.apache.tiles:tiles-compat:jar:3.0.5:compile
+[INFO] |  \- com.google.guava:guava:jar:12.0.1:compile
+[INFO] |     \- com.google.code.findbugs:jsr305:jar:1.3.9:compile
+[INFO] +- org.slf4j:slf4j-api:jar:1.4.2:compile
+[INFO] +- org.slf4j:slf4j-jdk14:jar:1.4.2:runtime
+[INFO] +- org.slf4j:jcl104-over-slf4j:jar:1.4.2:runtime
+[INFO] \- org.slf4j:log4j-over-slf4j:jar:1.4.2:runtime
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time: 3.688s
+[INFO] Finished at: Fri Apr 24 10:19:53 EDT 2015
+[INFO] Final Memory: 10M/166M
+[INFO] ------------------------------------------------------------------------
+[WARNING] The requested profile "hss.developer.appc" could not be activated because it does not exist.
+[WARNING] The requested profile "fazr.weblogic.entity" could not be activated because it does not exist.
+[WARNING] The requested profile "fazr.weblogic.session" could not be activated because it does not exist.
+[WARNING] The requested profile "hss.netbeans" could not be activated because it does not exist.
+[WARNING] The requested profile "fazr.war-inplace" could not be activated because it does not exist.
