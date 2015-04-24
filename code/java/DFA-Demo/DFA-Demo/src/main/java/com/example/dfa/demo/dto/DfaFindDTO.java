@@ -25,17 +25,14 @@ public class DfaFindDTO implements Serializable {
     Integer stateId;
     String phoneNum;
     String likeEmailAddr;
-    Boolean includeSubState;
 
     public DfaFindDTO(Long employeeId, Long workflowId) {
         this.employeeId = employeeId;
         this.workflowId = workflowId;
-        this.includeSubState = true;
     }
 
     public DfaFindDTO(Long workflowId) {
         this.workflowId = workflowId;
-        this.includeSubState = true;
     }
 
     public DfaFindDTO() {
@@ -136,14 +133,4 @@ public class DfaFindDTO implements Serializable {
     public void setLikeEmailAddr(String likeEmailAddr) {
         this.likeEmailAddr = likeEmailAddr;
     }
-
-    public Boolean getIncludeSubState() {
-        return includeSubState;
-    }
-
-    public void setIncludeSubState(Boolean includeSubState) {
-        this.includeSubState = includeSubState;
-    }
-    
-
 }

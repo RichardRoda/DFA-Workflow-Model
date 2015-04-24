@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+        <action>
+            <actionName>CUSTOM-Download Sources</actionName>
+            <displayName>Download Sources</displayName>
+            <goals>
+                <goal>dependency:sources</goal>
+                <goal>dependency:sources</goal>
+                <goal>-U</goal>
+            </goals>
+            <properties>
+                <downloadSources>true</downloadSources>
+                <downloadJavadoc>true</downloadJavadoc>
+                <classifier>javadoc</classifier>
+            </properties>
+        </action>
+    </actions>

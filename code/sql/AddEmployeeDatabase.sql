@@ -170,14 +170,9 @@ create procedure demo_employee.sp_findEmployeeWorkflows(employeeId BIGINT UNSIGN
    , likeCityNm VARCHAR(64)
    , stateId SMALLINT UNSIGNED
    , phoneNum VARCHAR(20)
-   , likeEmailAddr VARCHAR(64)
-   , includeSubState BIT)
+   , likeEmailAddr VARCHAR(64))
 MODIFIES SQL DATA
 BEGIN
-	IF (includeSubState IS NULL) THEN
-		SET includeSubState = FALSE;
-    END IF;
-
 	CALL demo_employee.initDfaFramework();
 
 	INSERT INTO dfa.session_dfa_workflow_state
@@ -188,17 +183,14 @@ BEGIN
 		ON EMPLOYEE_PROSPECT.EMPLOYEE_ID = epw.EMPLOYEE_ID
     -- Below left joins are to only bring in these tables if the corresponding
     -- search criteria are specified.
-    LEFT JOIN dfa.DFA_WORKFLOW DFA_WORKFLOW ON (workflowId IS NOT NULL OR includeSubState = TRUE) 
+    LEFT JOIN dfa.DFA_WORKFLOW DFA_WORKFLOW ON (workflowId IS NOT NULL) 
 		AND DFA_WORKFLOW.DFA_WORKFLOW_ID = epw.DFA_WORKFLOW_ID
 	LEFT JOIN dfa.DFA_WORKFLOW_STATE DFA_WORKFLOW_STATE ON active IS NOT NULL 
 		AND DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = epw.DFA_WORKFLOW_ID
 		AND DFA_WORKFLOW_STATE.IS_CURRENT = 1
 	LEFT JOIN dfa.LKUP_STATE LKUP_STATE ON active IS NOT NULL 
 		AND LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP 
-	WHERE (epw.DFA_WORKFLOW_ID = workflowId OR 
-			(includeSubState AND DFA_WORKFLOW.SPAWN_DFA_WORKFLOW_ID = workflowId) 
-		OR workflowId IS NULL)
-      AND (includeSubState OR DFA_WORKFLOW.SUB_STATE = FALSE)
+	WHERE (epw.DFA_WORKFLOW_ID = workflowId OR workflowId IS NULL)
       AND (workflowTyp IS NULL OR DFA_WORKFLOW.WORKFLOW_TYP = workflowTyp)
       AND (LKUP_STATE.ACTIVE IS NULL OR LKUP_STATE.ACTIVE = active)
 	  AND (epw.EMPLOYEE_ID = employeeId OR employeeId IS NULL)
@@ -215,7 +207,7 @@ BEGIN
 	CALL dfa.sp_processValidConstraints(1000, NULL); 
     
     -- Bring back the data for the application.
-    SELECT EMPLOYEE_PROSPECT.POSITION, EMPLOYEE_PROSPECT.LAST_NM, EMPLOYEE_PROSPECT.FIRST_NM, EMP_LKUP_STATE.state_abbr, LKUP_STATE.ACTIVE, LKUP_WORKFLOW_TYP.WORKFLOW_TX, LKUP_EVENT.EVENT_TX, LKUP_STATE.STATE_TX, IFNULL(EXPECTED_TRANS.EVENT_TX, EXPECTED_EVENT.EVENT_TX) as EXPECTED_NEXT_EVENT_TX
+    SELECT sdws.DFA_WORKFLOW_ID, EMPLOYEE_PROSPECT.POSITION, EMPLOYEE_PROSPECT.LAST_NM, EMPLOYEE_PROSPECT.FIRST_NM, EMP_LKUP_STATE.state_abbr, LKUP_STATE.ACTIVE, LKUP_WORKFLOW_TYP.WORKFLOW_TX, LKUP_EVENT.EVENT_TX, LKUP_STATE.STATE_TX, IFNULL(EXPECTED_TRANS.EVENT_TX, EXPECTED_EVENT.EVENT_TX) as EXPECTED_NEXT_EVENT_TX
     FROM dfa.session_dfa_workflow_state sdws JOIN dfa.DFA_WORKFLOW DFA_WORKFLOW ON sdws.DFA_WORKFLOW_ID = DFA_WORKFLOW.DFA_WORKFLOW_ID
     	join dfa.DFA_WORKFLOW_STATE DFA_WORKFLOW_STATE ON DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = sdws.DFA_WORKFLOW_ID
     	JOIN dfa.LKUP_STATE LKUP_STATE ON LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
@@ -274,11 +266,11 @@ BEGIN
 	CALL dfa.sp_do_startWorkflow(workflowTyp, commentTx, modBy, raiseError, 0, NULL, NULL, FALSE, dfaWorkflowId);
 
 -- Insert the newly created employee record.
-	insert into EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
+	insert into demo_employee.EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
     VALUES (employeeId, dfaWorkflowId, commentTx);
 
 -- Also insert any other records created.
-	insert into EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
+	insert into demo_employee.EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
     select employeeId,sdwo.DFA_WORKFLOW_ID,modBy
     from dfa.session_dfa_workflow_out sdwo LEFT JOIN EMPLOYEE_PROSPECT_WORKFLOW epw ON epw.EMPLOYEE_ID = employeeId and epw.DFA_WORKFLOW_ID = sdwo.DFA_WORKFLOW_ID
     where OUTPUT=1 AND epw.EMPLOYEE_ID IS NULL AND sdwo.DFA_WORKFLOW_ID <> dfaWorkflowId;

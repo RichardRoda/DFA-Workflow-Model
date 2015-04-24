@@ -41,7 +41,7 @@ VALUES
 set @employeeId = last_insert_id();
 
 CALL dfa.sp_cleanupSessionDataAndRoles();
-insert into session_user_role (ROLE_NM) VALUES ('USER');
+insert into dfa.session_user_role (ROLE_NM) VALUES ('USER');
 CALL demo_employee.sp_startWorkflow(@employeeId, 1000, 'Unit Test - Start Workflow', 'Employee UT', 1, @utDfaWorkflowId);
 
 select CASE WHEN DFA_WORKFLOW.WORKFLOW_TYP = 1000 THEN 'PASS' ELSE '1 FAIL - Workflow Typ' END

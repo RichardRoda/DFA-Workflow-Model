@@ -6,6 +6,7 @@
 package com.example.dfa.demo.dto;
 
 import java.io.Serializable;
+import java.util.Objects;
 
 /**
  *
@@ -13,6 +14,7 @@ import java.io.Serializable;
  */
 public class DfaWorkflowsDTO implements Serializable {
     
+    Long   dfaWorkflowId; // This is the primary key.
     String position;
     String lastNm;
     String firstNm; 
@@ -23,6 +25,31 @@ public class DfaWorkflowsDTO implements Serializable {
     String stateTx;
     String expectedNextEventTx;
 
+    @Override
+    public int hashCode() {
+        return Objects.hashCode(this.dfaWorkflowId);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj == null) {
+            return false;
+        }
+        if (this == obj) {
+            return true;
+        }
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
+        final DfaWorkflowsDTO other = (DfaWorkflowsDTO) obj;
+        if (!Objects.equals(this.dfaWorkflowId, other.dfaWorkflowId)) {
+            return false;
+        }
+        return true;
+    }
+
+
+    
     public String getPosition() {
         return position;
     }
@@ -93,6 +120,14 @@ public class DfaWorkflowsDTO implements Serializable {
 
     public void setExpectedNextEventTx(String expectedNextEventTx) {
         this.expectedNextEventTx = expectedNextEventTx;
+    }
+
+    public Long getDfaWorkflowId() {
+        return dfaWorkflowId;
+    }
+
+    public void setDfaWorkflowId(Long dfaWorkflowId) {
+        this.dfaWorkflowId = dfaWorkflowId;
     }
 
 

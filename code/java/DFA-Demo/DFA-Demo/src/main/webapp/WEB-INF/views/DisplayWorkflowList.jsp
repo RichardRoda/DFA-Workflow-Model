@@ -15,8 +15,17 @@
     </head>
     <body>
         <h1>Active Workflows</h1>
-        <display:table>
-            
+        <display:table list="${workflows}">
+            <display:column property="dfaWorkflowId"/>
+            <display:column property="position"/>
+            <display:column property="lastNm"/>
+            <display:column property="firstNm"/>
+            <display:column property="stateAbbr"/>
+            <display:column property="active"/>
+            <display:column property="workflowTx"/>
+            <display:column property="eventTx"/>
+            <display:column property="stateTx"/>
+            <display:column property="expectedNextEventTx"/>
         </display:table>
     </body>
 </html>
