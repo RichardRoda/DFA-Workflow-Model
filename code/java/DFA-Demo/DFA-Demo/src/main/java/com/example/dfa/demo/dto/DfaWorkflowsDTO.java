@@ -15,6 +15,8 @@ import java.util.Objects;
 public class DfaWorkflowsDTO implements Serializable {
     
     Long   dfaWorkflowId; // This is the primary key.
+    Long   spawnDfaWorkflowId;
+    Long   employeeId;
     String position;
     String lastNm;
     String firstNm; 
@@ -130,5 +132,19 @@ public class DfaWorkflowsDTO implements Serializable {
         this.dfaWorkflowId = dfaWorkflowId;
     }
 
+    public Long getEmployeeId() {
+        return employeeId;
+    }
 
+    public void setEmployeeId(Long employeeId) {
+        this.employeeId = employeeId;
+    }
+
+    public Long getSpawnDfaWorkflowId() {
+        return spawnDfaWorkflowId;
+    }
+
+    public void setSpawnDfaWorkflowId(Long spawnDfaWorkflowId) {
+        this.spawnDfaWorkflowId = spawnDfaWorkflowId;
+    }
 }

@@ -138,7 +138,7 @@ UNION select CASE WHEN count(*) = 3 THEN 'PASS'
     from ref_dfa_constraint WHERE DFA_WORKFLOW_ID = @utDfaWorkflowId AND REF_ID=1 and CONSTRAINT_ID IN (1,2,3)
 ;
 
-CALL demo_employee.sp_findEmployeeWorkflows(@employeeId, @utDfaWorkflowId, NULL, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+CALL demo_employee.sp_findEmployeeWorkflows(@employeeId, @utDfaWorkflowId, NULL, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 CALL dfa.sp_selectWorkflowStates(@utDfaWorkflowId);
 CALL dfa.sp_selectWorkflowEvents(@utDfaWorkflowId);
 
@@ -172,7 +172,7 @@ UNION select CASE WHEN count(*) = 3 THEN 'PASS'
     from ref_dfa_constraint WHERE DFA_WORKFLOW_ID = @utDfaWorkflowId AND REF_ID=1 and CONSTRAINT_ID IN (1,2,3)
 ;
 
-CALL demo_employee.sp_findEmployeeWorkflows(@employeeId, @utDfaWorkflowId, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+CALL demo_employee.sp_findWorkflowAndCurrentSubWorkflows(@utDfaWorkflowId);
 CALL dfa.sp_selectWorkflowEvents(@utDfaWorkflowId);
 
 ROLLBACK;

@@ -26,7 +26,7 @@ public class FindDfaWorkflows {
     @Autowired DfaDemoService dfaDemoService;
     
     @RequestMapping(method=RequestMethod.GET)
-    public String findWorkflows(@ModelAttribute DfaFindDTO query, Map<String,Object> model) {
+    public String findWorkflows(@ModelAttribute("query") DfaFindDTO query, Map<String,Object> model) {
         Collection<DfaWorkflowsDTO> workflows = dfaDemoService.findWorkflows(query);
         model.put("workflows", workflows);
         return "displayWorkflowList";
