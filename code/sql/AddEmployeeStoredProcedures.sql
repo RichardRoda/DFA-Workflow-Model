@@ -10,6 +10,18 @@ delimiter ;
 
 grant EXECUTE ON PROCEDURE demo_employee.initDfaFramework to demo_employee_user;
 
+drop procedure if exists demo_employee.sp_setupEmployeeConstraints;
+delimiter GO
+create procedure demo_employee.sp_setupEmployeeConstraints(dfaWorkflowId BIGINT UNSIGNED) 
+	MODIFIES SQL DATA	
+BEGIN
+IF dfaWorkflowId IS NOT NULL and NOT EXISTS (select * from dfa.session_dfa_workflow_state where DFA_WORKFLOW_ID = dfaWorkflowId) THEN
+	insert into dfa.session_dfa_workflow_state (DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
+	VALUES (dfaWorkflowId, 1, 0);
+END IF;
+END GO
+delimiter ;
+
 drop procedure if exists demo_employee.sp_selectEmployeeWorkflows;
 delimiter GO
 create procedure demo_employee.sp_selectEmployeeWorkflows(refId MEDIUMINT UNSIGNED)
@@ -90,6 +102,7 @@ BEGIN
       ;
 
 	CALL dfa.sp_processValidConstraints(1000, NULL); 
+	CALL demo_employee.sp_setupEmployeeConstraints(NULL);
    CALL demo_employee.sp_selectEmployeeWorkflows(0);
     
 END GO
@@ -116,6 +129,7 @@ BEGIN
 	WHERE DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = dfaWorkflowId AND DFA_WORKFLOW_STATE.IS_CURRENT = 1 AND DFA_WORKFLOW.SUB_STATE = 1;
 
 	CALL dfa.sp_processValidConstraints(1000, NULL); 
+	CALL demo_employee.sp_setupEmployeeConstraints(NULL);
    CALL demo_employee.sp_selectEmployeeWorkflows(0);
 	
 END GO
@@ -136,6 +150,7 @@ create procedure demo_employee.sp_processWorkflowEvent(employeeId BIGINT UNSIGNE
 	MODIFIES SQL DATA
 BEGIN
 	CALL demo_employee.initDfaFramework();
+	CALL demo_employee.sp_setupEmployeeConstraints(dfaWorkflowId);
 	CALL dfa.sp_processWorkflowEvent(dfaWorkflowId, eventTyp, commentTx, modBy, raiseError, refId, dfaStateId);
     -- Insert any newly created workflows.
 	insert into EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
@@ -180,6 +195,7 @@ END GO
 delimiter ;
 
 grant EXECUTE ON PROCEDURE demo_employee.sp_selectWorkflowEventsAndStates to demo_employee_user;
+
 
 flush PRIVILEGES;
 

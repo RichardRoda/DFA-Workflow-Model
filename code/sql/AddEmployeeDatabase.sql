@@ -32,6 +32,8 @@ grant demo_employee_user to demo_employee_admin;
 grant dfa_user to demo_employee_user;
 
 
+-- Set up constraint for salary > 60000
+
 CREATE TABLE LKUP_STATE (
 state_id   smallint    unsigned not null auto_increment comment 'PK: Unique state ID',
 state_name varchar(32) not null comment 'State name with first letter capital',
