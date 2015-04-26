@@ -43,5 +43,6 @@
         <tiles:insertDefinition name="statesTable">
             <tiles:putAttribute name="states" value="${states}"/>
         </tiles:insertDefinition>
+        <a href='<c:url value="/findWorkflows.htm"/>'>Show Workflows</a>
     </body>
 </html>

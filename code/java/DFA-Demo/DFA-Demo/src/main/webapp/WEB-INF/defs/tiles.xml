@@ -14,4 +14,5 @@ and open the template in the editor.
     <definition name="displayWorkflowDetail" template="/WEB-INF/views/DisplayWorkflowDetail.jsp"/>
     <definition name="workflowsTable" template="/WEB-INF/views/DisplayWorkflowTable.jsp"/>
     <definition name="statesTable" template="/WEB-INF/views/WorkflowStates.jsp"/>
+    <definition name="newEmployeeProspect" template="/WEB-INF/views/AddNewEmployeeProspect.jsp"/>
 </tiles-definitions>

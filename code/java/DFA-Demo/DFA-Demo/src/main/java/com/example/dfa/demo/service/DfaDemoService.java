@@ -8,6 +8,7 @@ package com.example.dfa.demo.service;
 import com.example.dfa.demo.dto.DfaFindDTO;
 import com.example.dfa.demo.dto.DfaWorkflowDetailDTO;
 import com.example.dfa.demo.dto.DfaWorkflowsDTO;
+import com.example.dfa.demo.dto.EmployeeProspectDTO;
 import com.example.dfa.demo.dto.NextEventDTO;
 import java.util.Collection;
 
@@ -22,5 +23,7 @@ public interface DfaDemoService {
     DfaWorkflowDetailDTO getWorkflowDetail(Long dfaWorkflowId);
 
     NextEventDTO processWorkflowEvent(NextEventDTO nextEvent);
+
+    Long addNewProspect(EmployeeProspectDTO employeeProspect);
     
 }

@@ -8,6 +8,7 @@ package com.example.dfa.demo.service;
 import com.example.dfa.demo.dto.DfaFindDTO;
 import com.example.dfa.demo.dto.DfaWorkflowDetailDTO;
 import com.example.dfa.demo.dto.DfaWorkflowsDTO;
+import com.example.dfa.demo.dto.EmployeeProspectDTO;
 import com.example.dfa.demo.dto.NextEventDTO;
 import com.example.dfa.demo.dto.SelectedEventsDTO;
 import com.example.dfa.demo.dto.WorkflowStatesDTO;
@@ -24,6 +25,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.jdbc.core.simple.ParameterizedBeanPropertyRowMapper;
 import org.springframework.jdbc.core.simple.SimpleJdbcCall;
+import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,6 +42,7 @@ public class DfaDemoServiceImpl implements Serializable, DfaDemoService {
     SimpleJdbcCall getWorkflowsSpaCall;
     SimpleJdbcCall getSelectedEventsAndStatesSpaCall;
     SimpleJdbcCall processWorkflowEventSpaCall;
+    SimpleJdbcInsert insertEmployeeInsertStatement;
     
     @Autowired 
     public void setJdbcTemplate(JdbcTemplate jdbcTemplate) {
@@ -59,6 +62,8 @@ public class DfaDemoServiceImpl implements Serializable, DfaDemoService {
                         BeanPropertyRowMapper.newInstance(WorkflowStatesDTO.class));
         
         processWorkflowEventSpaCall = new SimpleJdbcCall(jdbcTemplate).withProcedureName("sp_processWorkflowEvent").withCatalogName("demo_employee");
+
+        insertEmployeeInsertStatement = new SimpleJdbcInsert(jdbcTemplate).usingGeneratedKeyColumns("DFA_WORKFLOW_ID").withCatalogName("demo_employee").withTableName("EMPLOYEE_PROSPECT");
     }
     
     @Override
@@ -87,5 +92,12 @@ public class DfaDemoServiceImpl implements Serializable, DfaDemoService {
         processWorkflowEventSpaCall.execute(inParams);
         NextEventDTO result = jdbcTemplate.queryForObject("SELECT dws.DFA_WORKFLOW_ID,dws.DFA_STATE_ID FROM dfa.DFA_WORKFLOW JOIN dfa.DFA_WORKFLOW_STATE dws ON dws.DFA_WORKFLOW_ID = IF(SUB_STATE, dfa.DFA_WORKFLOW.SPAWN_DFA_WORKFLOW_ID, dfa.DFA_WORKFLOW.DFA_WORKFLOW_ID) AND dws.IS_CURRENT = 1 WHERE dfa.DFA_WORKFLOW.DFA_WORKFLOW_ID = ?", new BeanPropertyRowMapper<NextEventDTO>(NextEventDTO.class), nextEvent.getDfaWorkflowId());
         return result;
+    }
+    
+    @Override
+    public Long addNewProspect(EmployeeProspectDTO employeeProspect) {
+        SqlParameterSource inParams = new BeanPropertySqlParameterSource(employeeProspect);
+        Number insertedRow = insertEmployeeInsertStatement.executeAndReturnKey(inParams);
+        return insertedRow.longValue();
     }
 }

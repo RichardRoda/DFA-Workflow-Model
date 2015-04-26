@@ -15,6 +15,7 @@
     </head>
     <body>
         <h1>Active Workflows</h1>
+        <a href="<c:url value='/addNewEmployeeProspect.htm'/>">Add New Prospective Employee</a>
     <tiles:insertDefinition name="workflowsTable">
         <tiles:putAttribute name="workflows" value="${workflows}"/>
         <tiles:putAttribute name="showActive" value="${empty query.active}"/>        
