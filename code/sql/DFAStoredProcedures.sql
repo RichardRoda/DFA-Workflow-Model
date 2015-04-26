@@ -693,10 +693,12 @@ BEGIN
     JOIN LKUP_STATE ls ON ls.STATE_TYP = dws.STATE_TYP
     JOIN session_dfa_constraint sdc ON sdc.DFA_WORKFLOW_ID = dws.DFA_WORKFLOW_ID AND ls.CONSTRAINT_ID = sdc.CONSTRAINT_ID
     WHERE dws.DFA_WORKFLOW_ID = dfaWorkflowId 
-    ORDER BY dws.IS_CURRENT desc, dws.DFA_STATE_ID desc;
+    ORDER BY dws.DFA_STATE_ID desc;
 
 END GO
 delimiter ;
+
+grant EXECUTE ON PROCEDURE dfa.sp_selectWorkflowStates to dfa_viewer;
 
 drop procedure if exists dfa.sp_selectWorkflowEvents;
 delimiter GO

@@ -139,8 +139,7 @@ UNION select CASE WHEN count(*) = 3 THEN 'PASS'
 ;
 
 CALL demo_employee.sp_findEmployeeWorkflows(@employeeId, @utDfaWorkflowId, NULL, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-CALL dfa.sp_selectWorkflowStates(@utDfaWorkflowId);
-CALL dfa.sp_selectWorkflowEvents(@utDfaWorkflowId);
+CALL demo_employee.sp_selectWorkflowEventsAndStates(@utDfaWorkflowId);
 
 CALL demo_employee.sp_processWorkflowEvent(@employeeId, @utDfaWorkflowId, 1005, 'Test expected event', 'Employee UT', 1, 0, 3);
 
