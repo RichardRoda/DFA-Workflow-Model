@@ -1,21 +1,74 @@
 
-drop procedure if exists demo_employee.sp_setupEmployeeConstraints;
+drop procedure if exists demo_employee.sp_setupEmployeeData;
 delimiter GO
-create procedure demo_employee.sp_setupEmployeeConstraints(dfaWorkflowId BIGINT UNSIGNED) 
+create procedure demo_employee.sp_setupEmployeeData(dfaWorkflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA	
 BEGIN
-IF dfaWorkflowId IS NOT NULL and NOT EXISTS (select * from dfa.session_dfa_workflow_state where DFA_WORKFLOW_ID = dfaWorkflowId) THEN
-	insert into dfa.session_dfa_workflow_state (DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
-	VALUES (dfaWorkflowId, 1, 0);
-END IF;
-
+IF dfaWorkflowId IS NOT NULL THEN
+	insert into dfa.session_dfa_field_value (DFA_WORKFLOW_ID, FIELD_ID,INT_VALUE)
+select epw.DFA_WORKFLOW_ID, 5, ep.SALARY 
+from demo_employee.EMPLOYEE_PROSPECT_WORKFLOW epw
+	JOIN demo_employee.EMPLOYEE_PROSPECT ep ON epw.EMPLOYEE_ID = ep.EMPLOYEE_ID
+	WHERE epw.DFA_WORKFLOW_ID = dfaWorkflowId;
+ELSE
 insert into dfa.session_dfa_field_value (DFA_WORKFLOW_ID, FIELD_ID,INT_VALUE)
 select epw.DFA_WORKFLOW_ID, 5, ep.SALARY 
 from dfa.session_dfa_workflow_state sdfs 
 	JOIN demo_employee.EMPLOYEE_PROSPECT_WORKFLOW epw ON epw.DFA_WORKFLOW_ID = sdfs.DFA_WORKFLOW_ID
-	JOIN demo_employee.EMPLOYEE_PROSPECT ep ON epw.EMPLOYEE_ID = ep.EMPLOYEE_ID
-	WHERE ep.SALARY IS NOT NULL AND (dfaWorkflowId IS NULL OR sdfs.DFA_WORKFLOW_ID = dfaWorkflowId);
-		
+	JOIN demo_employee.EMPLOYEE_PROSPECT ep ON epw.EMPLOYEE_ID = ep.EMPLOYEE_ID;
+END IF;
 END GO
 delimiter ;
 
+drop procedure if exists demo_employee.sp_setupNewEmployeeData;
+delimiter GO
+create procedure demo_employee.sp_setupNewEmployeeData(employeeId BIGINT UNSIGNED) 
+	MODIFIES SQL DATA	
+BEGIN
+insert into dfa.session_dfa_field_value (DFA_WORKFLOW_ID, FIELD_ID,INT_VALUE)
+select 1, 5, ep.SALARY 
+from demo_employee.EMPLOYEE_PROSPECT ep
+	WHERE ep.EMPLOYEE_ID = employeeId;
+END GO
+delimiter ;
+
+START TRANSACTION;
+
+INSERT INTO LKUP_STATE
+	(STATE_TYP, STATE_NM, STATE_TX, ACTIVE, EXPECTED_NEXT_EVENT, ALT_STATE_TYP, MOD_BY, CONSTRAINT_ID)
+	VALUES (1005, 'Pending Approval', 'Pending Approval', 1, NULL, NULL, 'DFA Admin',1);
+
+INSERT INTO LKUP_STATE
+	(STATE_TYP, STATE_NM, STATE_TX, ACTIVE, EXPECTED_NEXT_EVENT, ALT_STATE_TYP, MOD_BY, CONSTRAINT_ID)
+	VALUES (1006, 'Disapproved', 'Disapproved', 0, NULL, NULL, 'DFA Admin',1);
+
+-- Add another state and transitions.
+UPDATE LKUP_EVENT_STATE_TRANS SET NEXT_STATE_TYP=1005 WHERE STATE_TYP=1003 AND EVENT_TYP=1003;
+
+insert into LKUP_EVENT (ATTENTION,EVENT_TYP,EVENT_NM,EVENT_TX,MOD_BY) VALUES (false,1008,'Approve','Approve','DFA Admin');
+insert into LKUP_EVENT (ATTENTION,EVENT_TYP,EVENT_NM,EVENT_TX,MOD_BY) VALUES (true,1009,'Disapprove','Disapprove','DFA Admin');
+
+INSERT INTO LKUP_EVENT_STATE_TRANS (STATE_TYP,EVENT_TYP,NEXT_STATE_TYP,MOD_BY) VALUES (1005,1008,1004,'DFA Admin');
+UPDATE LKUP_STATE SET EXPECTED_NEXT_EVENT = 1008 WHERE STATE_TYP=1005;
+
+INSERT INTO LKUP_EVENT_STATE_TRANS (STATE_TYP,EVENT_TYP,NEXT_STATE_TYP,MOD_BY) VALUES (1005,1009,1006,'DFA Admin');
+
+COMMIT
+
+/*
+ROLLBACK;
+
+select * from LKUP_STATE
+
+select LKUP_STATE.STATE_NM, LKUP_EVENT.EVENT_TX, NEXT.STATE_NM, lest.STATE_TYP, lest.EVENT_TYP, lest.NEXT_STATE_TYP
+from LKUP_EVENT_STATE_TRANS lest JOIN LKUP_STATE on lest.STATE_TYP = LKUP_STATE.STATE_TYP
+	JOIN LKUP_EVENT ON LKUP_EVENT.EVENT_TYP = lest.EVENT_TYP
+	JOIN LKUP_STATE NEXT ON NEXT.STATE_TYP = lest.NEXT_STATE_TYP
+	order by lest.STATE_TYP, lest.EVENT_TYP, lest.NEXT_STATE_TYP;
+	
+-- REVERT DFA:
+UPDATE SET NEXT_STATE_TYP=1004 WHERE STATE_TYP=1003 AND EVENT_TYP=1003
+
+*/	
+
+	

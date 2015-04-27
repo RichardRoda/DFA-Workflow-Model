@@ -6,6 +6,7 @@
 package com.example.dfa.demo.dto;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.Objects;
 
 /**
@@ -27,7 +28,8 @@ public class DfaWorkflowsDTO implements Serializable {
     String eventTx; 
     String stateTx;
     String expectedNextEventTx;
-
+    BigDecimal salary;
+    
     @Override
     public int hashCode() {
         return Objects.hashCode(this.dfaWorkflowId);
@@ -155,6 +157,14 @@ public class DfaWorkflowsDTO implements Serializable {
 
     public void setDfaStateId(Integer dfaStateId) {
         this.dfaStateId = dfaStateId;
+    }
+
+    public BigDecimal getSalary() {
+        return salary;
+    }
+
+    public void setSalary(BigDecimal salary) {
+        this.salary = salary;
     }
 
 }

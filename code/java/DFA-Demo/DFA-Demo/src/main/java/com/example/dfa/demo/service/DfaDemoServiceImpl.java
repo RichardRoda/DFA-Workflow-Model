@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.convert.ConversionService;
 import org.springframework.jdbc.core.BeanPropertyRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.BeanPropertySqlParameterSource;
@@ -43,6 +44,10 @@ public class DfaDemoServiceImpl implements Serializable, DfaDemoService {
     SimpleJdbcCall getSelectedEventsAndStatesSpaCall;
     SimpleJdbcCall processWorkflowEventSpaCall;
     SimpleJdbcInsert insertEmployeeInsertStatement;
+    SimpleJdbcCall startWorkflowSpaCall;
+    
+    @Autowired
+    ConversionService converter;
     
     @Autowired 
     public void setJdbcTemplate(JdbcTemplate jdbcTemplate) {
@@ -64,6 +69,8 @@ public class DfaDemoServiceImpl implements Serializable, DfaDemoService {
         processWorkflowEventSpaCall = new SimpleJdbcCall(jdbcTemplate).withProcedureName("sp_processWorkflowEvent").withCatalogName("demo_employee");
 
         insertEmployeeInsertStatement = new SimpleJdbcInsert(jdbcTemplate).usingGeneratedKeyColumns("DFA_WORKFLOW_ID").withCatalogName("demo_employee").withTableName("EMPLOYEE_PROSPECT");
+
+        startWorkflowSpaCall = new SimpleJdbcCall(jdbcTemplate).withProcedureName("sp_startWorkflow").withCatalogName("demo_employee");
     }
     
     @Override
@@ -98,6 +105,10 @@ public class DfaDemoServiceImpl implements Serializable, DfaDemoService {
     public Long addNewProspect(EmployeeProspectDTO employeeProspect) {
         SqlParameterSource inParams = new BeanPropertySqlParameterSource(employeeProspect);
         Number insertedRow = insertEmployeeInsertStatement.executeAndReturnKey(inParams);
-        return insertedRow.longValue();
+        employeeProspect.setEmployeeId(insertedRow.longValue());
+        Map<String,?> result = startWorkflowSpaCall.execute(inParams);
+        Long dfaWorkflowId = converter.convert(result.get("dfaWorkflowId"), Long.class);
+        employeeProspect.setDfaWorkflowId(dfaWorkflowId);
+        return dfaWorkflowId;
     }
 }

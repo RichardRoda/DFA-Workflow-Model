@@ -10,15 +10,21 @@ delimiter ;
 
 grant EXECUTE ON PROCEDURE demo_employee.initDfaFramework to demo_employee_user;
 
-drop procedure if exists demo_employee.sp_setupEmployeeConstraints;
+drop procedure if exists demo_employee.sp_setupEmployeeData;
 delimiter GO
-create procedure demo_employee.sp_setupEmployeeConstraints(dfaWorkflowId BIGINT UNSIGNED) 
+create procedure demo_employee.sp_setupEmployeeData(dfaWorkflowId BIGINT UNSIGNED) 
 	MODIFIES SQL DATA	
 BEGIN
-IF dfaWorkflowId IS NOT NULL and NOT EXISTS (select * from dfa.session_dfa_workflow_state where DFA_WORKFLOW_ID = dfaWorkflowId) THEN
-	insert into dfa.session_dfa_workflow_state (DFA_WORKFLOW_ID, DFA_STATE_ID, OUTPUT)
-	VALUES (dfaWorkflowId, 1, 0);
-END IF;
+-- Placeholder for data processing proc.
+END GO
+delimiter ;
+
+drop procedure if exists demo_employee.sp_setupNewEmployeeData;
+delimiter GO
+create procedure demo_employee.sp_setupNewEmployeeData(employeeId BIGINT UNSIGNED) 
+	MODIFIES SQL DATA	
+BEGIN
+-- Placeholder for data processing proc.
 END GO
 delimiter ;
 
@@ -27,7 +33,7 @@ delimiter GO
 create procedure demo_employee.sp_selectEmployeeWorkflows(refId MEDIUMINT UNSIGNED)
 BEGIN
     -- Bring back the data for the application.
-    SELECT sdws.DFA_WORKFLOW_ID, DFA_WORKFLOW_STATE.DFA_STATE_ID, DFA_WORKFLOW.SPAWN_DFA_WORKFLOW_ID, EMPLOYEE_PROSPECT.EMPLOYEE_ID, EMPLOYEE_PROSPECT.POSITION, EMPLOYEE_PROSPECT.LAST_NM, EMPLOYEE_PROSPECT.FIRST_NM, EMP_LKUP_STATE.state_abbr, LKUP_STATE.ACTIVE, LKUP_WORKFLOW_TYP.WORKFLOW_TX, LKUP_EVENT.EVENT_TX, LKUP_STATE.STATE_TX, IFNULL(EXPECTED_TRANS.EVENT_TX, EXPECTED_EVENT.EVENT_TX) as EXPECTED_NEXT_EVENT_TX
+    SELECT sdws.DFA_WORKFLOW_ID, DFA_WORKFLOW_STATE.DFA_STATE_ID, DFA_WORKFLOW.SPAWN_DFA_WORKFLOW_ID, EMPLOYEE_PROSPECT.EMPLOYEE_ID, EMPLOYEE_PROSPECT.SALARY, EMPLOYEE_PROSPECT.POSITION, EMPLOYEE_PROSPECT.LAST_NM, EMPLOYEE_PROSPECT.FIRST_NM, EMP_LKUP_STATE.state_abbr, LKUP_STATE.ACTIVE, LKUP_WORKFLOW_TYP.WORKFLOW_TX, LKUP_EVENT.EVENT_TX, LKUP_STATE.STATE_TX, IFNULL(EXPECTED_TRANS.EVENT_TX, EXPECTED_EVENT.EVENT_TX) as EXPECTED_NEXT_EVENT_TX
     FROM dfa.ref_dfa_workflow_state sdws JOIN dfa.DFA_WORKFLOW DFA_WORKFLOW ON sdws.REF_ID = refId AND sdws.DFA_WORKFLOW_ID = DFA_WORKFLOW.DFA_WORKFLOW_ID
     	join dfa.DFA_WORKFLOW_STATE DFA_WORKFLOW_STATE ON DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = sdws.DFA_WORKFLOW_ID
     	JOIN dfa.LKUP_STATE LKUP_STATE ON LKUP_STATE.STATE_TYP = DFA_WORKFLOW_STATE.STATE_TYP
@@ -101,8 +107,8 @@ BEGIN
 	  AND (EMPLOYEE_PROSPECT.EMAIL_ADDR like likeEmailAddr OR likeEmailAddr IS NULL)
       ;
 
+	CALL demo_employee.sp_setupEmployeeData(NULL);
 	CALL dfa.sp_processValidConstraints(1000, NULL); 
-	CALL demo_employee.sp_setupEmployeeConstraints(NULL);
    CALL demo_employee.sp_selectEmployeeWorkflows(0);
     
 END GO
@@ -128,8 +134,8 @@ BEGIN
 		and DFA_WORKFLOW.SPAWN_DFA_STATE_ID = DFA_WORKFLOW_STATE.DFA_STATE_ID
 	WHERE DFA_WORKFLOW_STATE.DFA_WORKFLOW_ID = dfaWorkflowId AND DFA_WORKFLOW_STATE.IS_CURRENT = 1 AND DFA_WORKFLOW.SUB_STATE = 1;
 
+	CALL demo_employee.sp_setupEmployeeData(NULL);
 	CALL dfa.sp_processValidConstraints(1000, NULL); 
-	CALL demo_employee.sp_setupEmployeeConstraints(NULL);
    CALL demo_employee.sp_selectEmployeeWorkflows(0);
 	
 END GO
@@ -150,7 +156,7 @@ create procedure demo_employee.sp_processWorkflowEvent(employeeId BIGINT UNSIGNE
 	MODIFIES SQL DATA
 BEGIN
 	CALL demo_employee.initDfaFramework();
-	CALL demo_employee.sp_setupEmployeeConstraints(dfaWorkflowId);
+	CALL demo_employee.sp_setupEmployeeData(dfaWorkflowId);
 	CALL dfa.sp_processWorkflowEvent(dfaWorkflowId, eventTyp, commentTx, modBy, raiseError, refId, dfaStateId);
     -- Insert any newly created workflows.
 	insert into EMPLOYEE_PROSPECT_WORKFLOW (EMPLOYEE_ID, DFA_WORKFLOW_ID, MOD_BY)
@@ -168,6 +174,7 @@ CREATE PROCEDURE demo_employee.sp_startWorkflow(employeeId BIGINT UNSIGNED, work
 	MODIFIES SQL DATA
 BEGIN
 	CALL demo_employee.initDfaFramework();
+	CALL sp_setupNewEmployeeData(employeeId);
 	CALL dfa.sp_do_startWorkflow(workflowTyp, commentTx, modBy, raiseError, 0, NULL, NULL, FALSE, dfaWorkflowId);
 
 -- Insert the newly created employee record.

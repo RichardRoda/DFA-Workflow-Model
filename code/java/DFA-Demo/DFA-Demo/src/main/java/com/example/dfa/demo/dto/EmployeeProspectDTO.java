@@ -6,6 +6,7 @@
 package com.example.dfa.demo.dto;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 
 /**
@@ -23,8 +24,12 @@ public class EmployeeProspectDTO implements Serializable {
     String phoneNum; // PHONE_NUM VARCHAR(20) NULL,
     String emailAddr; // EMAIL_ADDR VARCHAR(64) NULL,
     String position; // POSITION VARCHAR(32) NULL,
-    BigInteger salary; // NUMERIC(12,2) NULL,
-
+    BigDecimal salary; // NUMERIC(12,2) NULL,
+    Integer workflowTyp = 1000;
+    String commentTx = "New employee added.";
+    String modBy = "Add Employee User";
+    Long dfaWorkflowId;
+    
     public Long getEmployeeId() {
         return employeeId;
     }
@@ -105,13 +110,47 @@ public class EmployeeProspectDTO implements Serializable {
         this.position = position;
     }
 
-    public BigInteger getSalary() {
+    public BigDecimal getSalary() {
         return salary;
     }
 
-    public void setSalary(BigInteger salary) {
+    public void setSalary(BigDecimal salary) {
         this.salary = salary;
     }
 
-    
+    public Integer getWorkflowTyp() {
+        return workflowTyp;
+    }
+
+    public void setWorkflowTyp(Integer workflowTyp) {
+        this.workflowTyp = workflowTyp;
+    }
+
+    public String getCommentTx() {
+        return commentTx;
+    }
+
+    public void setCommentTx(String commentTx) {
+        this.commentTx = commentTx;
+    }
+
+    public String getModBy() {
+        return modBy;
+    }
+
+    public void setModBy(String modBy) {
+        this.modBy = modBy;
+    }
+
+    public Long getDfaWorkflowId() {
+        return dfaWorkflowId;
+    }
+
+    public void setDfaWorkflowId(Long dfaWorkflowId) {
+        this.dfaWorkflowId = dfaWorkflowId;
+    }
+
+    public Boolean getRaiseError() {
+        return Boolean.TRUE;
+    }
 }

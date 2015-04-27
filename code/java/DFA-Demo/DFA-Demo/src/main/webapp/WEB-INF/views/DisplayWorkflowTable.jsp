@@ -20,7 +20,7 @@
         <display:column property="active"/>
     </c:if>
     <display:column property="workflowTx" title="Workflow"/>
-    <display:column property="eventTx" title="Previous Event"/>
-    <display:column property="stateTx" title="Current Status"/>
+    <display:column property="salary"/>
+    <display:column title="Current Status"><b>${row.stateTx}</b></display:column>
     <display:column property="expectedNextEventTx" title="Expected Next Event"/>
 </display:table>

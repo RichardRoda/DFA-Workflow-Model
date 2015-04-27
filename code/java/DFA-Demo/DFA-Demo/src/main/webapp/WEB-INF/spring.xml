@@ -2,11 +2,14 @@
 <beans xmlns="http://www.springframework.org/schema/beans"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xmlns:jee="http://www.springframework.org/schema/jee"
+    xmlns:mvc="http://www.springframework.org/schema/mvc"
     xmlns:p="http://www.springframework.org/schema/p"
     xmlns:context="http://www.springframework.org/schema/context"
     xsi:schemaLocation="
         http://www.springframework.org/schema/beans
         http://www.springframework.org/schema/beans/spring-beans.xsd
+        http://www.springframework.org/schema/mvc
+        http://www.springframework.org/schema/mvc/spring-mvc.xsd
         http://www.springframework.org/schema/jee
         http://www.springframework.org/schema/jee/spring-jee.xsd
         http://www.springframework.org/schema/context
@@ -22,6 +25,19 @@
         <constructor-arg ref="dataSource"></constructor-arg>
     </bean>
     
+    <!-- Spring MVC -->
+    <mvc:annotation-driven />
+    <context:component-scan base-package="com.example"/>
+
+        <mvc:resources mapping="/resources/**" location="/resources/" />
+        <bean id="viewResolver" class="org.springframework.web.servlet.view.tiles3.TilesViewResolver"/>     
+        <bean id="tilesConfigurer" class="org.springframework.web.servlet.view.tiles3.TilesConfigurer">        
+            <property name="definitions">            
+                <list>                
+                    <value>/WEB-INF/defs/tiles.xml</value>                
+                </list>        
+            </property>    
+        </bean>
     <!-- other <bean/> definitions here -->
 
 </beans>
